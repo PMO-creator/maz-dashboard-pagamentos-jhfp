@@ -222,8 +222,8 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
         "Unnamed: 4":  "req_mxm",          # col E — ID da requisição no ERP MXM
         "Unnamed: 6":  "dias_vencimento",  # col G — contador de dias (negativo = vencido)
         "Unnamed: 7":  "termino_contrato", # col H — data de vigência final do contrato
-        "Unnamed: 9":  "doc_fiscal",       # col J — número da NF/DANFE
-        "Unnamed: 10": "data_pgto",        # col K — data de pagamento ou previsão
+        "Unnamed: 9":  "data_pgto",        # col J — data de pagamento ou previsão
+        "Unnamed: 10": "doc_fiscal",       # col K — número da NF/DANFE
     }
     df = df.rename(columns={k: v for k, v in mapa_posicional.items() if k in df.columns})
 
