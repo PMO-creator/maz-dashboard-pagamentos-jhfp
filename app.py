@@ -11,6 +11,10 @@
 #   data_handler.py → Toda a lógica de dados (separado para manutenção fácil)
 # =============================================================================
 
+import json
+import os
+from datetime import datetime, timedelta
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -18,6 +22,34 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 import data_handler as dh
+
+# --------------------------------------------------------------------------- #
+# CONFIG PERSISTENTE — salva URL e aba em arquivo local por 5 dias             #
+# O arquivo sobrevive a F5 e fechamento do navegador. É apagado após 5 dias    #
+# ou quando o admin salva novas configurações.                                  #
+# --------------------------------------------------------------------------- #
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_config.json")
+_CONFIG_TTL  = timedelta(days=5)
+
+
+def _ler_config_persistente() -> dict:
+    """Lê configuração salva em disco. Retorna {} se expirada ou inexistente."""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        salvo_em = datetime.fromisoformat(cfg.get("salvo_em", "2000-01-01"))
+        if datetime.now() - salvo_em > _CONFIG_TTL:
+            return {}
+        return cfg
+    except Exception:
+        return {}
+
+
+def _salvar_config_persistente(url: str, aba: str) -> None:
+    """Salva URL e aba em disco com timestamp."""
+    cfg = {"sheets_url": url, "sheets_aba": aba, "salvo_em": datetime.now().isoformat()}
+    with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -212,27 +244,27 @@ st.markdown("""
 _ADMIN_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
 _ADMIN_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
 
-# Lê configurações de fonte de dados das Secrets (valores padrão fixados pelo admin)
-_url_secrets  = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
-_aba_secrets  = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+# Prioridade de configuração: 1) Secrets  2) Arquivo local (5 dias)  3) Vazio
+_url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
+_aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+_cfg_disk    = _ler_config_persistente()
 
-# Inicializa estado de autenticação do administrador na sessão
+# Inicializa estado de autenticação
 if "admin_autenticado" not in st.session_state:
     st.session_state["admin_autenticado"] = False
 
-# Usa os valores das Secrets como padrão; o admin pode sobrescrever via UI
-sheets_url_input = st.session_state.get("sheets_url", _url_secrets)
-nome_aba_input   = st.session_state.get("sheets_aba", _aba_secrets)
+# Carrega URL e aba: Secrets > arquivo em disco > vazio
+sheets_url_input = _url_secrets or _cfg_disk.get("sheets_url", "")
+nome_aba_input   = _aba_secrets or _cfg_disk.get("sheets_aba", "")
 
 with st.sidebar:
 
     # ------------------------------------------------------------------ #
-    # Seção de configuração — protegida por login de administrador         #
+    # Configurações protegidas por login de administrador                  #
     # ------------------------------------------------------------------ #
     with st.expander("⚙️ Configurações", expanded=not bool(sheets_url_input)):
 
         if not st.session_state["admin_autenticado"]:
-            # Formulário de login — submetido com Enter ou botão
             with st.form("form_admin", clear_on_submit=False):
                 st.caption("Acesso restrito a administradores.")
                 login_input = st.text_input("Login", placeholder="seu login")
@@ -246,7 +278,6 @@ with st.sidebar:
                 else:
                     st.error("Login ou senha incorretos.")
         else:
-            # Admin autenticado — exibe campos de configuração
             st.success("✅ Administrador autenticado")
 
             novo_url = st.text_input(
@@ -264,17 +295,18 @@ with st.sidebar:
             col_s, col_l = st.columns(2)
             with col_s:
                 if st.button("💾 Salvar", use_container_width=True):
-                    st.session_state["sheets_url"] = novo_url
-                    st.session_state["sheets_aba"] = nova_aba
+                    # Persiste em disco por 5 dias — sobrevive a F5 e recargas
+                    _salvar_config_persistente(novo_url, nova_aba)
                     sheets_url_input = novo_url
                     nome_aba_input   = nova_aba
+                    st.success("Configurações salvas por 5 dias.")
                     st.rerun()
             with col_l:
                 if st.button("🔒 Sair", use_container_width=True):
                     st.session_state["admin_autenticado"] = False
                     st.rerun()
 
-    # Fallback: upload manual (disponível para todos, sem autenticação)
+    # Upload manual (disponível para todos)
     st.markdown("### 📎 Upload Manual")
     arquivo = st.file_uploader(
         "Planilha (.xlsx ou .csv)",
@@ -683,61 +715,154 @@ else:
 
 
 # --------------------------------------------------------------------------- #
-# SEÇÃO 5 — TABELA DETALHADA COM FILTROS APLICADOS                             #
+# SEÇÃO 5 — DETALHAMENTO HIERÁRQUICO (Compras + Pagamentos expansíveis)        #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">📋 Detalhamento de Registros</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-title">📋 Detalhamento de Contratos</p>', unsafe_allow_html=True)
 
-# Indicador de filtros ativos
-filtros_ativos = []
-if sel_fornecedor:
-    filtros_ativos.append(f"**Fornecedor:** {', '.join(sel_fornecedor)}")
-if sel_grupos_label:
-    filtros_ativos.append(f"**Situação:** {', '.join(sel_grupos_label)}")
 
-if filtros_ativos:
-    st.caption("Filtros ativos: " + " · ".join(filtros_ativos) + f" · {len(df_filtrado)} registros")
+def _fmt(v, tipo="texto"):
+    """Formata valor para exibição na tabela hierárquica."""
+    if pd.isna(v) or str(v).strip() in ("", "nan", "None"):
+        return "—"
+    if tipo == "valor":
+        try:
+            return fmt_brl(float(v))
+        except Exception:
+            return str(v)
+    if tipo == "data":
+        try:
+            return pd.to_datetime(v).strftime("%d/%m/%Y")
+        except Exception:
+            return str(v)
+    return str(v)
+
+
+def _status_badge(status: str, grupo: str) -> str:
+    """Retorna HTML do badge de status colorido."""
+    cor = dh.CORES_GRUPO.get(grupo, "#8B949E")
+    emoji = dh.EMOJI_GRUPO.get(grupo, "")
+    return (
+        f'<span style="background:{cor}22;border:1px solid {cor};color:{cor};'
+        f'font-size:0.7rem;padding:2px 8px;border-radius:20px;white-space:nowrap;">'
+        f'{emoji} {status}</span>'
+    )
+
+
+# ---- Abas: Em andamento | Quitados ----
+aba_ativa = st.radio(
+    "",
+    options=["🔄  Em Andamento", "✅  Quitados"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+mostrar_quitados = aba_ativa.startswith("✅")
+
+# Monta hierarquia a partir do df filtrado (mantém ordem da planilha)
+hierarquia = dh.agrupar_hierarquia(df_filtrado)
+
+# Filtra por aba ativa
+def _eh_quitado(compra) -> bool:
+    status = str(compra.get("status", ""))
+    grupo  = str(compra.get("grupo_status", ""))
+    return status in dh.STATUS_QUITADO or grupo == "concluido"
+
+hierarquia_filtrada = [
+    (c, p) for c, p in hierarquia
+    if _eh_quitado(c) == mostrar_quitados
+]
+
+# Indicador de resultado
+n_contratos = len(hierarquia_filtrada)
+st.caption(f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: **{n_contratos}**")
+
+if not hierarquia_filtrada:
+    st.info("Nenhum contrato encontrado nesta categoria com os filtros aplicados.")
 else:
-    st.caption(f"Exibindo todos os {len(df_filtrado)} registros")
+    for compra, df_pags in hierarquia_filtrada:
 
-# Colunas a exibir na tabela (apenas as que existem no dataframe)
-colunas_tabela = [c for c in [
-    "tipo", "fornecedor", "req_mxm", "valor", "descritivo",
-    "status", "grupo_status", "data_pgto", "termino_contrato",
-    "doc_fiscal", "observacoes"
-] if c in df_filtrado.columns]
+        # --- Dados principais da Compra ---
+        fornecedor   = _fmt(compra.get("fornecedor"))
+        valor        = _fmt(compra.get("valor"), "valor")
+        req          = _fmt(compra.get("req_mxm"))
+        descritivo   = _fmt(compra.get("descritivo"))
+        status       = str(compra.get("status", "—"))
+        grupo        = str(compra.get("grupo_status", "alerta"))
+        termino      = _fmt(compra.get("termino_contrato"), "data")
+        observacoes  = _fmt(compra.get("observacoes"))
+        n_parcelas   = len(df_pags) if not df_pags.empty else 0
+        label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
 
-df_exibir = df_filtrado[colunas_tabela].copy()
+        # --- Linha de cabeçalho do contrato ---
+        badge = _status_badge(status, grupo)
+        st.markdown(
+            f"""
+            <div style="
+                background:#161B22;border:1px solid #21262D;border-radius:10px;
+                padding:14px 18px;margin-bottom:4px;
+            ">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <span style="font-weight:700;color:#E6EDF3;font-size:0.95rem;">{fornecedor}</span>
+                        <span style="color:#8B949E;font-size:0.75rem;margin-left:10px;">Req. {req}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span style="color:#C9A84C;font-weight:700;font-size:1rem;">{valor}</span>
+                        {badge}
+                    </div>
+                </div>
+                <div style="color:#8B949E;font-size:0.78rem;margin-top:6px;">
+                    {descritivo}
+                    {"&nbsp;·&nbsp;Término: " + termino if termino != "—" else ""}
+                    {"&nbsp;·&nbsp;" + observacoes if observacoes != "—" else ""}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-# Formata valor para exibição
-if "valor" in df_exibir.columns:
-    df_exibir["valor"] = df_exibir["valor"].apply(
-        lambda v: fmt_brl(v) if pd.notna(v) and v != 0 else "—"
-    )
+        # --- Expansor de pagamentos/parcelas ---
+        if n_parcelas > 0:
+            with st.expander(f"＋ Ver pagamentos / parcelas{label_expand}", expanded=False):
 
-# Adiciona emoji de grupo no status para leitura visual rápida
-if "grupo_status" in df_exibir.columns and "status" in df_exibir.columns:
-    df_exibir["status"] = df_exibir.apply(
-        lambda r: f"{dh.EMOJI_GRUPO.get(r['grupo_status'], '')} {r['status']}",
-        axis=1
-    )
-    df_exibir = df_exibir.drop(columns=["grupo_status"])
+                # Monta tabela de pagamentos
+                colunas_pag = [c for c in [
+                    "req_mxm", "descritivo", "valor", "status",
+                    "data_pgto", "doc_fiscal", "observacoes"
+                ] if c in df_pags.columns]
 
-# Renomeia para português amigável
-renomear = {
-    "tipo": "Tipo", "fornecedor": "Fornecedor", "req_mxm": "Req. MXM",
-    "valor": "Valor", "descritivo": "Descritivo", "status": "Status",
-    "data_pgto": "Data Pgto", "termino_contrato": "Término Contrato",
-    "doc_fiscal": "Doc. Fiscal", "observacoes": "Observações",
-}
-df_exibir = df_exibir.rename(columns={k: v for k, v in renomear.items() if k in df_exibir.columns})
+                df_pag_exibir = df_pags[colunas_pag].copy()
 
-st.dataframe(df_exibir, use_container_width=True, hide_index=True)
+                if "valor" in df_pag_exibir.columns:
+                    df_pag_exibir["valor"] = df_pag_exibir["valor"].apply(
+                        lambda v: _fmt(v, "valor")
+                    )
+                if "data_pgto" in df_pag_exibir.columns:
+                    df_pag_exibir["data_pgto"] = df_pag_exibir["data_pgto"].apply(
+                        lambda v: _fmt(v, "data")
+                    )
+                if "status" in df_pag_exibir.columns and "grupo_status" in df_pags.columns:
+                    grupos_pag = df_pags["grupo_status"].tolist()
+                    df_pag_exibir["status"] = [
+                        f"{dh.EMOJI_GRUPO.get(g, '')} {s}"
+                        for s, g in zip(df_pag_exibir["status"], grupos_pag)
+                    ]
 
-# Botão de download da tabela filtrada
+                renomear_pag = {
+                    "req_mxm": "Req. MXM", "descritivo": "Descritivo",
+                    "valor": "Valor", "status": "Status",
+                    "data_pgto": "Data Pgto", "doc_fiscal": "Doc. Fiscal",
+                    "observacoes": "Observações",
+                }
+                df_pag_exibir = df_pag_exibir.rename(
+                    columns={k: v for k, v in renomear_pag.items() if k in df_pag_exibir.columns}
+                )
+                st.dataframe(df_pag_exibir, use_container_width=True, hide_index=True)
+
+# Botão de exportação
 csv_export = df_filtrado.to_csv(index=False, encoding="utf-8-sig")
 st.download_button(
-    label="⬇️  Exportar tabela filtrada (.csv)",
+    label="⬇️  Exportar dados filtrados (.csv)",
     data=csv_export,
     file_name="maz_pagamentos_filtrado.csv",
     mime="text/csv",

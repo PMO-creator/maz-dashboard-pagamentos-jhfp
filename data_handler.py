@@ -388,3 +388,47 @@ def aplicar_filtros(df: pd.DataFrame, fornecedores: list, grupos_status: list) -
         df_filtrado = df_filtrado[df_filtrado["grupo_status"].isin(grupos_status)]
 
     return df_filtrado
+
+
+def agrupar_hierarquia(df: pd.DataFrame) -> list[tuple]:
+    """
+    Agrupa as linhas de Pagamento sob sua respectiva linha de Compra,
+    usando a ORDEM SEQUENCIAL das linhas na planilha (não depende de chave).
+
+    Retorna lista de tuplas: (Series compra, DataFrame pagamentos_filhos)
+    Compras sem nenhum Pagamento abaixo retornam DataFrame vazio como filhos.
+    """
+    grupos = []
+    compra_atual = None
+    pagamentos_acumulados = []
+
+    for _, row in df.iterrows():
+        tipo = str(row.get("tipo", "")).strip().title()
+
+        if tipo == "Compra":
+            # Fecha o grupo anterior antes de abrir um novo
+            if compra_atual is not None:
+                grupos.append((
+                    compra_atual,
+                    pd.DataFrame(pagamentos_acumulados) if pagamentos_acumulados
+                    else pd.DataFrame(columns=df.columns)
+                ))
+            compra_atual = row
+            pagamentos_acumulados = []
+
+        elif tipo == "Pagamento" and compra_atual is not None:
+            pagamentos_acumulados.append(row.to_dict())
+
+    # Fecha o último grupo
+    if compra_atual is not None:
+        grupos.append((
+            compra_atual,
+            pd.DataFrame(pagamentos_acumulados) if pagamentos_acumulados
+            else pd.DataFrame(columns=df.columns)
+        ))
+
+    return grupos
+
+
+# Status que indicam contrato/pagamento encerrado
+STATUS_QUITADO = STATUS_GRUPOS["concluido"]  # ["Pago", "Contrato/Template quitado"]
