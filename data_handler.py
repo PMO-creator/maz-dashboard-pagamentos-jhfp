@@ -218,12 +218,12 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     # Este mapa corrige pela posição exata detectada na planilha MAZ.
     # Se a ordem das colunas mudar, basta atualizar os índices abaixo.
     mapa_posicional = {
-        "Unnamed: 3":  "req_mxm",
-        "Unnamed: 4":  "valor",
-        "Unnamed: 6":  "termino_contrato",
-        "Unnamed: 7":  "dias_vencimento",
-        "Unnamed: 9":  "doc_fiscal",
-        "Unnamed: 10": "data_pgto",
+        "Unnamed: 3":  "valor",            # col D — valor financeiro do contrato/parcela
+        "Unnamed: 4":  "req_mxm",          # col E — ID da requisição no ERP MXM
+        "Unnamed: 6":  "dias_vencimento",  # col G — contador de dias (negativo = vencido)
+        "Unnamed: 7":  "termino_contrato", # col H — data de vigência final do contrato
+        "Unnamed: 9":  "doc_fiscal",       # col J — número da NF/DANFE
+        "Unnamed: 10": "data_pgto",        # col K — data de pagamento ou previsão
     }
     df = df.rename(columns={k: v for k, v in mapa_posicional.items() if k in df.columns})
 
