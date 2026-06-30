@@ -8,6 +8,7 @@
 #   Nunca somar Compra + Pagamento no mesmo indicador financeiro.
 # =============================================================================
 
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,71 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import streamlit as st
+
+
+# --------------------------------------------------------------------------- #
+# GESTÃO DE ACESSOS — Owner / Admin / Viewer                                   #
+# O Owner vem das Secrets do Streamlit (login fixo, não editável pela UI).    #
+# Admins e Viewers são cadastrados pelo Owner e persistidos em disco.         #
+# --------------------------------------------------------------------------- #
+
+_USUARIOS_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_usuarios.json")
+
+PAPEL_OWNER  = "owner"
+PAPEL_ADMIN  = "admin"
+PAPEL_VIEWER = "viewer"
+
+
+def _hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode("utf-8")).hexdigest()
+
+
+def carregar_usuarios() -> dict:
+    """Retorna {login: {senha_hash, papel, nome}} dos usuários cadastrados (sem o Owner)."""
+    try:
+        with open(_USUARIOS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def salvar_usuarios(usuarios: dict) -> None:
+    with open(_USUARIOS_FILE, "w", encoding="utf-8") as f:
+        json.dump(usuarios, f, ensure_ascii=False, indent=2)
+
+
+def adicionar_usuario(login: str, senha: str, papel: str, nome: str) -> None:
+    usuarios = carregar_usuarios()
+    usuarios[login.strip()] = {
+        "senha_hash": _hash_senha(senha),
+        "papel": papel,
+        "nome": nome.strip() or login.strip(),
+    }
+    salvar_usuarios(usuarios)
+
+
+def remover_usuario(login: str) -> None:
+    usuarios = carregar_usuarios()
+    usuarios.pop(login.strip(), None)
+    salvar_usuarios(usuarios)
+
+
+def autenticar(login: str, senha: str, owner_login: str, owner_senha: str) -> dict | None:
+    """
+    Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (disco).
+    Retorna {"papel": ..., "nome": ..., "login": ...} se autenticado, senão None.
+    """
+    login = login.strip()
+
+    if owner_login and login == owner_login and senha == owner_senha:
+        return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login}
+
+    usuarios = carregar_usuarios()
+    registro = usuarios.get(login)
+    if registro and registro.get("senha_hash") == _hash_senha(senha):
+        return {"papel": registro.get("papel", PAPEL_VIEWER), "nome": registro.get("nome", login), "login": login}
+
+    return None
 
 
 # --------------------------------------------------------------------------- #

@@ -219,6 +219,66 @@ def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
 
 
 # --------------------------------------------------------------------------- #
+# AUTENTICAÇÃO — Owner / Admin / Viewer                                        #
+# O Owner vem das Secrets (login fixo). Admins e Viewers são cadastrados        #
+# pelo Owner e ficam persistidos em disco. Toda a aplicação fica bloqueada     #
+# até o login ser validado — a sessão dura até o navegador ser fechado.       #
+# --------------------------------------------------------------------------- #
+
+_OWNER_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
+_OWNER_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"]   = False
+    st.session_state["papel"]         = None
+    st.session_state["nome_usuario"]  = None
+    st.session_state["login_usuario"] = None
+
+if not st.session_state["autenticado"]:
+    st.markdown(
+        """
+        <div style="max-width:420px;margin:64px auto 0;text-align:center;">
+            <div style="font-size:2.6rem;">🏛️</div>
+            <p style="font-size:1.3rem;font-weight:700;color:#E6EDF3;margin:8px 0 2px;">
+                MAZ | Museu das Amazônias
+            </p>
+            <p style="font-size:0.85rem;color:#8B949E;margin-bottom:28px;">
+                Dashboard Gerencial de Pagamentos · IDG — Instituto de Desenvolvimento e Gestão
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _, col_form, _ = st.columns([1, 1.2, 1])
+    with col_form:
+        with st.form("form_login"):
+            login_input = st.text_input("Login", placeholder="seu login")
+            senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+
+        if entrar:
+            resultado = dh.autenticar(login_input, senha_input, _OWNER_LOGIN, _OWNER_SENHA)
+            if resultado:
+                st.session_state["autenticado"]   = True
+                st.session_state["papel"]         = resultado["papel"]
+                st.session_state["nome_usuario"]  = resultado["nome"]
+                st.session_state["login_usuario"] = resultado["login"]
+                st.rerun()
+            else:
+                st.error("Login ou senha incorretos.")
+
+    st.stop()
+
+_papel_usuario = st.session_state["papel"]
+_PAPEL_LABEL = {
+    dh.PAPEL_OWNER:  "👑 Owner",
+    dh.PAPEL_ADMIN:  "🛠️ Admin",
+    dh.PAPEL_VIEWER: "👁️ Viewer",
+}
+
+
+# --------------------------------------------------------------------------- #
 # CABEÇALHO PRINCIPAL                                                           #
 # --------------------------------------------------------------------------- #
 
@@ -240,19 +300,10 @@ st.markdown("""
 # SIDEBAR — Fonte de dados e filtros interativos                                #
 # --------------------------------------------------------------------------- #
 
-# Lê credenciais de administrador das Secrets do Streamlit.
-# NUNCA hardcode senhas no código — elas ficam apenas no painel do Streamlit Cloud.
-_ADMIN_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
-_ADMIN_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
-
 # Prioridade de configuração: 1) Secrets  2) Arquivo local (5 dias)  3) Vazio
 _url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
 _aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
 _cfg_disk    = _ler_config_persistente()
-
-# Inicializa estado de autenticação
-if "admin_autenticado" not in st.session_state:
-    st.session_state["admin_autenticado"] = False
 
 # Carrega URL e aba: Secrets > arquivo em disco > vazio
 sheets_url_input = _url_secrets or _cfg_disk.get("sheets_url", "")
@@ -261,26 +312,29 @@ nome_aba_input   = _aba_secrets or _cfg_disk.get("sheets_aba", "")
 with st.sidebar:
 
     # ------------------------------------------------------------------ #
-    # Configurações protegidas por login de administrador                  #
+    # Identidade do usuário logado + logout                               #
     # ------------------------------------------------------------------ #
-    with st.expander("⚙️ Configurações", expanded=not bool(sheets_url_input)):
+    col_user, col_logout = st.columns([2.2, 1])
+    with col_user:
+        st.markdown(
+            f"**{st.session_state['nome_usuario']}**  \n"
+            f"<span style='color:#8B949E;font-size:0.75rem;'>{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</span>",
+            unsafe_allow_html=True,
+        )
+    with col_logout:
+        if st.button("Sair", use_container_width=True):
+            st.session_state["autenticado"]   = False
+            st.session_state["papel"]         = None
+            st.session_state["nome_usuario"]  = None
+            st.session_state["login_usuario"] = None
+            st.rerun()
 
-        if not st.session_state["admin_autenticado"]:
-            with st.form("form_admin", clear_on_submit=False):
-                st.caption("Acesso restrito a administradores.")
-                login_input = st.text_input("Login", placeholder="seu login")
-                senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
-                entrar = st.form_submit_button("Entrar", use_container_width=True)
-
-            if entrar:
-                if login_input == _ADMIN_LOGIN and senha_input == _ADMIN_SENHA:
-                    st.session_state["admin_autenticado"] = True
-                    st.rerun()
-                else:
-                    st.error("Login ou senha incorretos.")
-        else:
-            st.success("✅ Administrador autenticado")
-
+    # ------------------------------------------------------------------ #
+    # Configurações — visível para Owner e Admin                          #
+    # ------------------------------------------------------------------ #
+    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+        st.markdown("---")
+        with st.expander("⚙️ Configurações", expanded=not bool(sheets_url_input)):
             novo_url = st.text_input(
                 "🔗 Link do Google Sheets",
                 value=sheets_url_input,
@@ -293,59 +347,104 @@ with st.sidebar:
                 help="Nome exato da aba (case sensitive).",
             )
 
-            col_s, col_l = st.columns(2)
-            with col_s:
-                if st.button("💾 Salvar", use_container_width=True):
-                    # Persiste em disco por 5 dias — sobrevive a F5 e recargas
-                    _salvar_config_persistente(novo_url, nova_aba)
-                    sheets_url_input = novo_url
-                    nome_aba_input   = nova_aba
-                    st.success("Configurações salvas por 5 dias.")
-                    st.rerun()
-            with col_l:
-                if st.button("🔒 Sair", use_container_width=True):
-                    st.session_state["admin_autenticado"] = False
-                    st.rerun()
+            if st.button("💾 Salvar", use_container_width=True):
+                # Persiste em disco por 5 dias — sobrevive a F5 e recargas
+                _salvar_config_persistente(novo_url, nova_aba)
+                sheets_url_input = novo_url
+                nome_aba_input   = nova_aba
+                st.success("Configurações salvas por 5 dias.")
+                st.rerun()
 
     # ------------------------------------------------------------------ #
-    # Log de Alterações                                                    #
+    # Gerenciar Acessos — visível APENAS para o Owner                      #
     # ------------------------------------------------------------------ #
-    st.markdown("---")
-    with st.expander("📋 Log de Alterações", expanded=False):
-        entradas_log = dh.carregar_log()
-        if not entradas_log:
-            st.caption("Nenhuma alteração registrada ainda.\nO dashboard verifica mudanças a cada 1 hora automaticamente.")
-        else:
-            # Mostra as últimas 20 entradas, mais recentes primeiro
-            for entrada in reversed(entradas_log[-20:]):
-                horario_str = datetime.fromisoformat(entrada["horario"]).strftime("%d/%m/%Y %H:%M")
-                total = entrada.get("total", len(entrada.get("alteracoes", [])))
-                st.markdown(
-                    f"**🕐 {horario_str}** — {total} alteração{'ões' if total != 1 else ''}",
+    if _papel_usuario == dh.PAPEL_OWNER:
+        st.markdown("---")
+        with st.expander("👑 Gerenciar Acessos", expanded=False):
+            st.caption("Cadastre administradores e visualizadores. Visível apenas para você.")
+
+            with st.form("form_novo_usuario", clear_on_submit=True):
+                novo_login = st.text_input("Login do novo usuário")
+                novo_nome  = st.text_input("Nome de exibição")
+                nova_senha = st.text_input("Senha", type="password")
+                novo_papel = st.selectbox(
+                    "Papel",
+                    options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER],
+                    format_func=lambda p: "🛠️ Admin (edita configurações)" if p == dh.PAPEL_ADMIN else "👁️ Viewer (somente visualização)",
                 )
-                for alt in entrada.get("alteracoes", []):
-                    linha   = alt.get("linha", "?")
-                    forn    = alt.get("fornecedor", "—")
-                    tipo    = alt.get("tipo", "")
-                    campo   = alt.get("campo", "—")
-                    de_val  = alt.get("de", "—")
-                    para    = alt.get("para", "—")
+                cadastrar = st.form_submit_button("➕ Cadastrar", use_container_width=True)
 
-                    if campo == "(linha)":
-                        if para == "adicionada":
-                            st.caption(f"  ➕ Linha {linha} · {tipo} · {forn} — nova linha")
+            if cadastrar:
+                if not novo_login.strip() or not nova_senha:
+                    st.error("Login e senha são obrigatórios.")
+                elif novo_login.strip() == _OWNER_LOGIN:
+                    st.error("Este login já é o do Owner.")
+                else:
+                    dh.adicionar_usuario(novo_login, nova_senha, novo_papel, novo_nome)
+                    st.success(f"Usuário **{novo_login}** cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}.")
+                    st.rerun()
+
+            st.divider()
+            st.caption("Usuários cadastrados:")
+            usuarios_cadastrados = dh.carregar_usuarios()
+
+            if not usuarios_cadastrados:
+                st.caption("Nenhum administrador ou viewer cadastrado ainda.")
+            else:
+                for login_u, dados_u in usuarios_cadastrados.items():
+                    col_info, col_del = st.columns([3, 1])
+                    with col_info:
+                        papel_u = dados_u.get("papel", dh.PAPEL_VIEWER)
+                        st.markdown(
+                            f"**{dados_u.get('nome', login_u)}**  \n"
+                            f"<span style='color:#8B949E;font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
+                            unsafe_allow_html=True,
+                        )
+                    with col_del:
+                        if st.button("🗑️", key=f"del_{login_u}", help=f"Remover {login_u}"):
+                            dh.remover_usuario(login_u)
+                            st.rerun()
+
+    # ------------------------------------------------------------------ #
+    # Log de Alterações — visível para Owner e Admin                       #
+    # ------------------------------------------------------------------ #
+    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+        st.markdown("---")
+        with st.expander("📋 Log de Alterações", expanded=False):
+            entradas_log = dh.carregar_log()
+            if not entradas_log:
+                st.caption("Nenhuma alteração registrada ainda.\nO dashboard verifica mudanças a cada 1 hora automaticamente.")
+            else:
+                # Mostra as últimas 20 entradas, mais recentes primeiro
+                for entrada in reversed(entradas_log[-20:]):
+                    horario_str = datetime.fromisoformat(entrada["horario"]).strftime("%d/%m/%Y %H:%M")
+                    total = entrada.get("total", len(entrada.get("alteracoes", [])))
+                    st.markdown(
+                        f"**🕐 {horario_str}** — {total} alteração{'ões' if total != 1 else ''}",
+                    )
+                    for alt in entrada.get("alteracoes", []):
+                        linha   = alt.get("linha", "?")
+                        forn    = alt.get("fornecedor", "—")
+                        tipo    = alt.get("tipo", "")
+                        campo   = alt.get("campo", "—")
+                        de_val  = alt.get("de", "—")
+                        para    = alt.get("para", "—")
+
+                        if campo == "(linha)":
+                            if para == "adicionada":
+                                st.caption(f"  ➕ Linha {linha} · {tipo} · {forn} — nova linha")
+                            else:
+                                st.caption(f"  ➖ Linha {linha} · {tipo} · {forn} — removida")
                         else:
-                            st.caption(f"  ➖ Linha {linha} · {tipo} · {forn} — removida")
-                    else:
-                        _NOMES_CAMPOS = {
-                            "status": "Status", "valor": "Valor", "fornecedor": "Fornecedor",
-                            "req_mxm": "Req. MXM", "data_pgto": "Data Pgto",
-                            "doc_fiscal": "Doc. Fiscal", "termino_contrato": "Término",
-                            "observacoes": "Observações", "tipo": "Tipo",
-                        }
-                        campo_label = _NOMES_CAMPOS.get(campo, campo)
-                        st.caption(f"  ✏️ Linha {linha} · {forn} · **{campo_label}**: {de_val} → {para}")
-                st.divider()
+                            _NOMES_CAMPOS = {
+                                "status": "Status", "valor": "Valor", "fornecedor": "Fornecedor",
+                                "req_mxm": "Req. MXM", "data_pgto": "Data Pgto",
+                                "doc_fiscal": "Doc. Fiscal", "termino_contrato": "Término",
+                                "observacoes": "Observações", "tipo": "Tipo",
+                            }
+                            campo_label = _NOMES_CAMPOS.get(campo, campo)
+                            st.caption(f"  ✏️ Linha {linha} · {forn} · **{campo_label}**: {de_val} → {para}")
+                    st.divider()
 
     # Upload manual (disponível para todos)
     st.markdown("### 📎 Upload Manual")

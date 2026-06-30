@@ -1,6 +1,12 @@
 # Credenciais — nunca subir para o GitHub
 .streamlit/secrets.toml
 
+# Dados persistentes locais (config, log de alterações, usuários cadastrados)
+.dashboard_config.json
+.dashboard_changelog.json
+.dashboard_snapshot.json
+.dashboard_usuarios.json
+
 # Python
 __pycache__/
 *.pyc
