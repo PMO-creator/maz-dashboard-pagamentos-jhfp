@@ -11,6 +11,7 @@
 #   data_handler.py → Toda a lógica de dados (separado para manutenção fácil)
 # =============================================================================
 
+import html
 import json
 import os
 from datetime import datetime, timedelta
@@ -722,20 +723,24 @@ st.markdown('<p class="section-title">📋 Detalhamento de Contratos</p>', unsaf
 
 
 def _fmt(v, tipo="texto"):
-    """Formata valor para exibição na tabela hierárquica."""
+    """
+    Formata valor para exibição na tabela hierárquica.
+    Sempre escapa caracteres HTML especiais (<, >, &, ", ')
+    para evitar que conteúdo da planilha quebre o template HTML do card.
+    """
     if pd.isna(v) or str(v).strip() in ("", "nan", "None"):
         return "—"
     if tipo == "valor":
         try:
             return fmt_brl(float(v))
         except Exception:
-            return str(v)
+            return html.escape(str(v))
     if tipo == "data":
         try:
             return pd.to_datetime(v).strftime("%d/%m/%Y")
         except Exception:
-            return str(v)
-    return str(v)
+            return html.escape(str(v))
+    return html.escape(str(v))
 
 
 def _status_badge(status: str, grupo: str) -> str:
