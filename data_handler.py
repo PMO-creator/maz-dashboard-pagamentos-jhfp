@@ -113,7 +113,22 @@ def carregar_do_sheets(url_csv: str) -> pd.DataFrame:
     Requer que a planilha esteja compartilhada como 'qualquer pessoa com o link'.
     O cache TTL=300s garante atualização automática a cada 5 minutos.
     """
-    df = pd.read_csv(url_csv, encoding="utf-8-sig")
+    # Lê sem cabeçalho primeiro para detectar automaticamente em qual linha
+    # estão os nomes reais das colunas (ignora linhas de título/data do topo).
+    df_raw = pd.read_csv(url_csv, encoding="utf-8-sig", header=None)
+
+    # Identifica a linha-cabeçalho: primeira linha que contém "Tipo" em alguma célula
+    # (comparação case-insensitive). Isso torna o código robusto a qualquer número
+    # de linhas de título acima dos dados reais.
+    header_row = 0
+    for i, row in df_raw.iterrows():
+        valores = row.astype(str).str.strip().str.lower().tolist()
+        if "tipo" in valores:
+            header_row = i
+            break
+
+    # Relê com o cabeçalho correto já identificado
+    df = pd.read_csv(url_csv, encoding="utf-8-sig", header=header_row)
     df = _normalizar_colunas(df)
     df = _converter_tipos(df)
     df = _enriquecer(df)
@@ -129,9 +144,24 @@ def carregar_dados(arquivo) -> pd.DataFrame:
     nome = arquivo.name.lower()
 
     if nome.endswith(".csv"):
-        df = pd.read_csv(arquivo, encoding="utf-8-sig", sep=None, engine="python")
+        df = pd.read_csv(arquivo, encoding="utf-8-sig", sep=None, engine="python", header=None)
+        header_row = 0
+        for i, row in df.iterrows():
+            if "tipo" in row.astype(str).str.strip().str.lower().tolist():
+                header_row = i
+                break
+        arquivo.seek(0)
+        df = pd.read_csv(arquivo, encoding="utf-8-sig", sep=None, engine="python", header=header_row)
     else:
-        df = pd.read_excel(arquivo, engine="openpyxl")
+        # Para Excel: lê sem cabeçalho, detecta a linha, relê corretamente
+        df_raw = pd.read_excel(arquivo, engine="openpyxl", header=None)
+        header_row = 0
+        for i, row in df_raw.iterrows():
+            if "tipo" in row.astype(str).str.strip().str.lower().tolist():
+                header_row = i
+                break
+        arquivo.seek(0)
+        df = pd.read_excel(arquivo, engine="openpyxl", header=header_row)
 
     df = _normalizar_colunas(df)
     df = _converter_tipos(df)
