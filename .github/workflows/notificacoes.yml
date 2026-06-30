@@ -1,0 +1,48 @@
+name: "MAZ · Notificações de Pagamentos Atrasados"
+
+on:
+  schedule:
+    # Roda de segunda a sexta às 11h UTC (8h horário de Brasília).
+    # O script notificador.py decide internamente se é dia de envio:
+    #   - Dias  1–19 → verifica e envia normalmente
+    #   - Dias 20–31 → janela de recesso IDG, encerra sem enviar
+    #   - Dia  1     → envia consolidado do período 20→31 do mês anterior
+    - cron: "0 11 * * 1-5"
+
+  # Permite disparar manualmente pelo painel do GitHub (Actions → Run workflow)
+  # Útil para testar a configuração sem esperar pelo cron.
+  workflow_dispatch:
+
+jobs:
+  notificar-pagamentos:
+    name: Verificar e notificar pagamentos atrasados
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install pandas requests
+
+      - name: Executar notificador
+        env:
+          # ── Planilha ──────────────────────────────────────────────────────
+          SHEETS_URL:          ${{ secrets.SHEETS_URL }}
+          SHEETS_ABA:          ${{ secrets.SHEETS_ABA }}
+          # ── SMTP (Gmail com App Password) ─────────────────────────────────
+          SMTP_HOST:           smtp.gmail.com
+          SMTP_PORT:           "587"
+          SMTP_USER:           ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:       ${{ secrets.SMTP_PASSWORD }}
+          # ── Destinatários (emails separados por vírgula) ──────────────────
+          EMAIL_DESTINATARIOS: ${{ secrets.EMAIL_DESTINATARIOS }}
+          # ── Parâmetros opcionais ──────────────────────────────────────────
+          # DIAS_LIMITE: número de dias de atraso para acionar o alerta (padrão: 30)
+          DIAS_LIMITE:         ${{ secrets.DIAS_LIMITE }}
+        run: python notificador.py
