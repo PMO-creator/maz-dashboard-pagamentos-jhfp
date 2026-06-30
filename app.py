@@ -747,10 +747,12 @@ def _status_badge(status: str, grupo: str) -> str:
     """Retorna HTML do badge de status colorido."""
     cor = dh.CORES_GRUPO.get(grupo, "#8B949E")
     emoji = dh.EMOJI_GRUPO.get(grupo, "")
+    # status pode conter caracteres especiais vindos da planilha — escapar sempre
+    status_safe = html.escape(str(status))
     return (
         f'<span style="background:{cor}22;border:1px solid {cor};color:{cor};'
         f'font-size:0.7rem;padding:2px 8px;border-radius:20px;white-space:nowrap;">'
-        f'{emoji} {status}</span>'
+        f'{emoji} {status_safe}</span>'
     )
 
 
@@ -787,24 +789,41 @@ else:
     for compra, df_pags in hierarquia_filtrada:
 
         # --- Dados principais da Compra ---
-        fornecedor   = _fmt(compra.get("fornecedor"))
-        valor        = _fmt(compra.get("valor"), "valor")
-        req          = _fmt(compra.get("req_mxm"))
-        descritivo   = _fmt(compra.get("descritivo"))
-        status       = str(compra.get("status", "—"))
-        grupo        = str(compra.get("grupo_status", "alerta"))
-        termino      = _fmt(compra.get("termino_contrato"), "data")
-        observacoes  = _fmt(compra.get("observacoes"))
+        # _fmt() aplica html.escape() em todos os valores de texto,
+        # evitando que conteúdo da planilha quebre a estrutura HTML do card.
+        fornecedor  = _fmt(compra.get("fornecedor"))
+        valor       = _fmt(compra.get("valor"), "valor")
+        req         = _fmt(compra.get("req_mxm"))
+        descritivo  = _fmt(compra.get("descritivo"))
+        termino     = _fmt(compra.get("termino_contrato"), "data")
+        observacoes = _fmt(compra.get("observacoes"))
+
+        # Status: trata "nan" (pandas NaN convertido para string) como sem status
+        status_raw = str(compra.get("status", ""))
+        status     = "Sem status" if status_raw in ("nan", "", "None") else status_raw
+        grupo      = str(compra.get("grupo_status", "alerta"))
+        if grupo in ("nan", "", "None"):
+            grupo = "alerta"
+
         n_parcelas   = len(df_pags) if not df_pags.empty else 0
         label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
 
-        # --- Linha de cabeçalho do contrato ---
+        # Linha de detalhes secundários (só mostra se houver conteúdo)
+        detalhes_parts = [descritivo] if descritivo != "—" else []
+        if termino != "—":
+            detalhes_parts.append(f"Término: {termino}")
+        if observacoes != "—":
+            detalhes_parts.append(observacoes)
+        detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
+
         badge = _status_badge(status, grupo)
-        st.markdown(
-            f"""
+
+        # st.html() renderiza HTML puro sem processamento markdown,
+        # eliminando interferência de caracteres especiais nos dados.
+        st.html(f"""
             <div style="
                 background:#161B22;border:1px solid #21262D;border-radius:10px;
-                padding:14px 18px;margin-bottom:4px;
+                padding:14px 18px;margin-bottom:4px;font-family:sans-serif;
             ">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                     <div>
@@ -816,15 +835,9 @@ else:
                         {badge}
                     </div>
                 </div>
-                <div style="color:#8B949E;font-size:0.78rem;margin-top:6px;">
-                    {descritivo}
-                    {"&nbsp;·&nbsp;Término: " + termino if termino != "—" else ""}
-                    {"&nbsp;·&nbsp;" + observacoes if observacoes != "—" else ""}
-                </div>
+                {f'<div style="color:#8B949E;font-size:0.78rem;margin-top:6px;">{detalhes_html}</div>' if detalhes_html else ""}
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        """)
 
         # --- Expansor de pagamentos/parcelas ---
         if n_parcelas > 0:
