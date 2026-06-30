@@ -219,9 +219,23 @@ with st.sidebar:
         help="Cole o link da planilha compartilhada como 'qualquer pessoa com o link pode ver'.",
     )
 
+    # Nome da aba — essencial quando a planilha tem múltiplas abas
+    aba_salva = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+    if not aba_salva:
+        aba_salva = st.session_state.get("sheets_aba", "")
+
+    nome_aba_input = st.text_input(
+        "📑 Nome da aba",
+        value=aba_salva,
+        placeholder="Ex: Pagamentos 2025",
+        help="Digite o nome exato da aba que contém os dados (case sensitive). Deixe vazio para usar a primeira aba.",
+    )
+
     # Salva na session para persistir durante a sessão do navegador
     if sheets_url_input:
         st.session_state["sheets_url"] = sheets_url_input
+    if nome_aba_input:
+        st.session_state["sheets_aba"] = nome_aba_input
 
     st.markdown("ou")
 
@@ -251,7 +265,7 @@ if arquivo:
 
 elif sheets_url_input:
     # Sincronização automática com Google Sheets
-    url_csv = dh.sheets_url_para_csv(sheets_url_input)
+    url_csv = dh.sheets_url_para_csv(sheets_url_input, nome_aba_input)
 
     if url_csv is None:
         st.error(

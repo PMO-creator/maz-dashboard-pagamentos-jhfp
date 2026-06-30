@@ -62,18 +62,17 @@ EMOJI_GRUPO = {
 }
 
 
-def sheets_url_para_csv(url: str) -> str | None:
+def sheets_url_para_csv(url: str, nome_aba: str = "") -> str | None:
     """
-    Converte qualquer variante de URL do Google Sheets para a URL
-    de exportação direta em CSV (sem autenticação — planilha pública).
+    Converte qualquer variante de URL do Google Sheets para URL de exportação CSV.
 
-    Formatos aceitos:
-      - https://docs.google.com/spreadsheets/d/ID/edit#gid=GID
-      - https://docs.google.com/spreadsheets/d/ID/edit?usp=sharing
-      - https://docs.google.com/spreadsheets/d/ID/pub?gid=GID&...
-      - https://docs.google.com/spreadsheets/d/ID/   (aba padrão)
+    Estratégia de seleção de aba (em ordem de prioridade):
+      1. nome_aba informado → usa API gviz (?sheet=NOME), mais confiável
+      2. gid presente na URL → usa endpoint /export?gid=GID
+      3. Nenhum dos dois → usa gid=0 (primeira aba, pode falhar se foi reordenada)
 
-    Retorna None se a URL não for reconhecida como Google Sheets.
+    A API gviz é preferível pois aceita o nome exato da aba, evitando
+    o erro 400 que ocorre quando gid=0 não corresponde a nenhuma aba real.
     """
     match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
     if not match:
@@ -81,13 +80,27 @@ def sheets_url_para_csv(url: str) -> str | None:
 
     sheet_id = match.group(1)
 
-    # Tenta extrair o gid (aba específica)
-    gid_match = re.search(r"[#&?]gid=(\d+)", url)
-    gid = gid_match.group(1) if gid_match else "0"
+    # Prioridade 1: nome da aba informado pelo usuário → API gviz (mais robusta)
+    if nome_aba and nome_aba.strip():
+        aba = nome_aba.strip()
+        return (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/gviz/tq?tqx=out:csv&sheet={aba}"
+        )
 
+    # Prioridade 2: gid presente na URL colada (usuário estava na aba certa ao copiar)
+    gid_match = re.search(r"[#&?]gid=(\d+)", url)
+    if gid_match:
+        return (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/export?format=csv&gid={gid_match.group(1)}"
+        )
+
+    # Fallback: tenta a primeira aba via gviz sem especificar nome
+    # (mais tolerante que gid=0 quando a ordem das abas foi alterada)
     return (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/export?format=csv&gid={gid}"
+        f"/gviz/tq?tqx=out:csv"
     )
 
 
