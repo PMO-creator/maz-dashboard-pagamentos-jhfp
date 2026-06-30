@@ -141,32 +141,47 @@ def carregar_dados(arquivo) -> pd.DataFrame:
 
 def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Padroniza os nomes das colunas para snake_case sem acentos,
-    tornando o código resistente a variações de digitação na planilha.
-    Também remove linhas completamente vazias.
+    Padroniza os nomes das colunas para snake_case sem acentos.
+    Usa comparação case-insensitive e ignora espaços extras para ser
+    resistente às variações que a API gviz do Google Sheets pode retornar.
+    Remove linhas completamente vazias.
     """
-    mapa = {
-        # Coluna original (aproximada) → nome interno padronizado
-        "Tipo":              "tipo",
-        "Fornecedor":        "fornecedor",
-        "Req. MXM":          "req_mxm",
-        "Req MXM":           "req_mxm",
-        "Valor":             "valor",
-        "Descritivo":        "descritivo",
-        "Término Contrato":  "termino_contrato",
-        "Termino Contrato":  "termino_contrato",
-        "Dias vencimento":   "dias_vencimento",
-        "Link contrato":     "link_contrato",
-        "Link Contrato":     "link_contrato",
-        "Doc Fiscal":        "doc_fiscal",
-        "Data pgto":         "data_pgto",
-        "Data Pgto":         "data_pgto",
-        "Status":            "status",
-        "Observações":       "observacoes",
-        "Observacoes":       "observacoes",
+    # Mapa: versão normalizada (lower + strip) → nome interno padronizado
+    mapa_normalizado = {
+        "tipo":               "tipo",
+        "fornecedor":         "fornecedor",
+        "req. mxm":           "req_mxm",
+        "req mxm":            "req_mxm",
+        "requisição mxm":     "req_mxm",
+        "valor":              "valor",
+        "descritivo":         "descritivo",
+        "término contrato":   "termino_contrato",
+        "termino contrato":   "termino_contrato",
+        "término do contrato":"termino_contrato",
+        "dias vencimento":    "dias_vencimento",
+        "link contrato":      "link_contrato",
+        "link do contrato":   "link_contrato",
+        "doc fiscal":         "doc_fiscal",
+        "documento fiscal":   "doc_fiscal",
+        "data pgto":          "data_pgto",
+        "data de pagamento":  "data_pgto",
+        "data pagamento":     "data_pgto",
+        "status":             "status",
+        "situação":           "status",
+        "situacao":           "status",
+        "observações":        "observacoes",
+        "observacoes":        "observacoes",
+        "observação":         "observacoes",
     }
-    # Renomeia apenas as colunas que existem no dataframe
-    df = df.rename(columns={k: v for k, v in mapa.items() if k in df.columns})
+
+    # Constrói mapa real: nome original → nome interno (via lookup normalizado)
+    renomear = {}
+    for col in df.columns:
+        chave = str(col).strip().lower()
+        if chave in mapa_normalizado:
+            renomear[col] = mapa_normalizado[chave]
+
+    df = df.rename(columns=renomear)
     df = df.dropna(how="all")
     return df
 

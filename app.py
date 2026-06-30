@@ -343,6 +343,18 @@ kpis = dh.calcular_kpis(df)
 # Indicador discreto de fonte e última atualização
 st.caption(fonte_dados)
 
+# Alerta de diagnóstico: exibe aviso se colunas essenciais não foram mapeadas.
+# Isso ajuda a identificar quando o nome da coluna na planilha é diferente do esperado.
+_colunas_essenciais = {"tipo", "fornecedor", "valor", "status"}
+_colunas_faltando = _colunas_essenciais - set(df.columns)
+if _colunas_faltando:
+    with st.expander("⚠️ Aviso de mapeamento de colunas — clique para ver detalhes", expanded=True):
+        st.warning(
+            f"As seguintes colunas não foram reconhecidas: **{', '.join(sorted(_colunas_faltando))}**\n\n"
+            "Verifique se os nomes na planilha coincidem com os esperados.\n\n"
+            f"**Colunas recebidas da planilha:** `{', '.join(df.columns.tolist())}`"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # SIDEBAR — Filtros dinâmicos (renderizados após carga dos dados)               #
@@ -546,7 +558,11 @@ st.markdown('<p class="section-title">⚠️ Análise de Gargalos · Pagamentos 
 
 # Status de alerta e em andamento são os gargalos a monitorar
 status_gargalo_lista = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
-df_gargalo = df_pag[df_pag["status"].isin(status_gargalo_lista)]
+df_gargalo = (
+    df_pag[df_pag["status"].isin(status_gargalo_lista)]
+    if "status" in df_pag.columns
+    else pd.DataFrame()
+)
 
 if df_gargalo.empty:
     st.success("✅ Nenhum pagamento em situação de gargalo no momento.")
