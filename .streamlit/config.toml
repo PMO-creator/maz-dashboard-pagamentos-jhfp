@@ -1,0 +1,19 @@
+# =============================================================================
+# CONFIGURAÇÃO DE TEMA GLOBAL — MAZ Dashboard
+# Paleta corporativa: fundo escuro premium + dourado amazônico + verde-água
+# =============================================================================
+
+[theme]
+base                = "dark"
+primaryColor        = "#C9A84C"        # Dourado — cor de identidade MAZ
+backgroundColor     = "#0D1117"        # Fundo principal quase-preto (GitHub dark)
+secondaryBackgroundColor = "#161B22"   # Cards e painéis laterais
+textColor           = "#E6EDF3"        # Texto principal branco suave
+font                = "sans serif"
+
+[server]
+headless            = true
+enableCORS          = false
+
+[browser]
+gatherUsageStats    = false
