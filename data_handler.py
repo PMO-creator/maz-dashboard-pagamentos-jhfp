@@ -212,6 +212,21 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
             renomear[col] = mapa_normalizado[chave]
 
     df = df.rename(columns=renomear)
+
+    # --- Mapeamento posicional para colunas "Unnamed: X" ---
+    # O Google Sheets retorna células mescladas do cabeçalho como "Unnamed: X".
+    # Este mapa corrige pela posição exata detectada na planilha MAZ.
+    # Se a ordem das colunas mudar, basta atualizar os índices abaixo.
+    mapa_posicional = {
+        "Unnamed: 3":  "req_mxm",
+        "Unnamed: 4":  "valor",
+        "Unnamed: 6":  "termino_contrato",
+        "Unnamed: 7":  "dias_vencimento",
+        "Unnamed: 9":  "doc_fiscal",
+        "Unnamed: 10": "data_pgto",
+    }
+    df = df.rename(columns={k: v for k, v in mapa_posicional.items() if k in df.columns})
+
     df = df.dropna(how="all")
     return df
 
