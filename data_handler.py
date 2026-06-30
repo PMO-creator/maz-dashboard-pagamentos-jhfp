@@ -296,31 +296,51 @@ def separar_por_tipo(df: pd.DataFrame):
     return df_compras, df_pagamentos
 
 
+def _soma_segura(df: pd.DataFrame, col_filtro: str, valor_filtro, col_soma: str, operador: str = "==") -> float:
+    """
+    Soma col_soma após filtrar col_filtro, verificando existência de ambas as colunas.
+    operador: "==" (igual), "!=" (diferente), "isin" (lista de valores).
+    Retorna 0.0 se qualquer coluna estiver ausente.
+    """
+    if col_filtro not in df.columns or col_soma not in df.columns:
+        return 0.0
+    if operador == "==":
+        mask = df[col_filtro] == valor_filtro
+    elif operador == "!=":
+        mask = df[col_filtro] != valor_filtro
+    elif operador == "isin":
+        mask = df[col_filtro].isin(valor_filtro)
+    else:
+        return 0.0
+    return df.loc[mask, col_soma].sum()
+
+
 def calcular_kpis(df: pd.DataFrame) -> dict:
     """
     Calcula todos os KPIs gerenciais a partir do DataFrame completo.
     Retorna um dicionário com valores prontos para exibição nos cards.
+    Usa _soma_segura() para nunca lançar KeyError mesmo com colunas ausentes.
     """
     df_compras, df_pag = separar_por_tipo(df)
 
     # KPI 1 — Orçamento Total Contratado (soma das Compras)
     orcamento_total = df_compras["valor"].sum() if "valor" in df_compras.columns else 0
 
-    # KPI 2 — Total Pago (Pagamentos com status "Pago")
-    pago = df_pag[df_pag["status"] == "Pago"]["valor"].sum() if "status" in df_pag.columns else 0
+    # KPI 2 — Total Pago
+    pago = _soma_segura(df_pag, "status", "Pago", "valor", "==")
 
-    # KPI 3 — Saldo a Pagar (Pagamentos ainda não pagos)
-    a_pagar = df_pag[df_pag["status"] != "Pago"]["valor"].sum() if "status" in df_pag.columns else 0
+    # KPI 3 — Saldo a Pagar
+    a_pagar = _soma_segura(df_pag, "status", "Pago", "valor", "!=")
 
-    # KPI 4 — Pagamentos "parados" em fases de gargalo
+    # KPI 4 — Valor parado em fases de gargalo
     status_gargalo = STATUS_GRUPOS["alerta"] + STATUS_GRUPOS["em_andamento"]
-    em_gargalo = (
-        df_pag[df_pag["status"].isin(status_gargalo)]["valor"].sum()
-        if "status" in df_pag.columns else 0
-    )
+    em_gargalo = _soma_segura(df_pag, "status", status_gargalo, "valor", "isin")
 
-    # KPI 5 — Contratos vencidos (Compras com status crítico)
-    vencidos = len(df_compras[df_compras["status"].isin(STATUS_GRUPOS["critico"])]) if "status" in df_compras.columns else 0
+    # KPI 5 — Contratos vencidos
+    vencidos = (
+        len(df_compras[df_compras["status"].isin(STATUS_GRUPOS["critico"])])
+        if "status" in df_compras.columns else 0
+    )
 
     # KPI 6 — Total de fornecedores únicos
     fornecedores = df["fornecedor"].nunique() if "fornecedor" in df.columns else 0
