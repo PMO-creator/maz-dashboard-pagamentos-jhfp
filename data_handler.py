@@ -242,10 +242,10 @@ STATUS_PARA_GRUPO = {
 
 # Cores por grupo (hex) — alinhadas à paleta do config.toml
 CORES_GRUPO = {
-    "concluido":    "#2DD4BF",   # Verde-água: sucesso
-    "em_andamento": "#C9A84C",   # Dourado: em movimento
-    "alerta":       "#F59E0B",   # Âmbar: atenção
-    "critico":      "#EF4444",   # Vermelho: urgente
+    "concluido":    "#4F6A1E",   # Verde-folha (marca): pago / quitado — a floresta
+    "em_andamento": "#3E9489",   # Verde-água (marca): em movimento — o rio que corre
+    "alerta":       "#E8920A",   # Laranja-sol (marca): atenção
+    "critico":      "#E02838",   # Vermelho-urucum (marca): urgência
 }
 
 # Emojis de suporte visual nos cards e tabelas

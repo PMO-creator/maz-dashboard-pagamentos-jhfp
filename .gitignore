@@ -16,3 +16,8 @@ __pycache__/
 *.xlsx
 *.xls
 *.csv
+
+# Materiais brutos de referência (logos originais em PDF/PNG @4x)
+assets_ref/
+smoke_out.txt
+smoke_err.txt

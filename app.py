@@ -56,134 +56,173 @@ def _salvar_config_persistente(url: str, aba: str) -> None:
 # --------------------------------------------------------------------------- #
 # CONFIGURAÇÃO DA PÁGINA — deve ser a primeira chamada Streamlit               #
 # --------------------------------------------------------------------------- #
+_favicon_path = os.path.join(os.path.dirname(__file__), "assets", "logo_vertical.png")
 st.set_page_config(
     page_title="MAZ | Dashboard de Pagamentos",
-    page_icon="🏛️",
+    page_icon=_favicon_path if os.path.exists(_favicon_path) else "🏛️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
 # --------------------------------------------------------------------------- #
-# CSS GLOBAL — sobrescreve estilos do Streamlit para o visual corporativo MAZ  #
-# Paleta: #0D1117 fundo | #C9A84C dourado | #2DD4BF verde-água | #161B22 cards#
+# CSS GLOBAL — Identidade "Trançado das Amazônias"                              #
+# Paleta da marca MAZ sobre papel de galeria:                                   #
+#   #F6F1E7 papel | #4F6A1E folha | #E02838 urucum | #E8920A sol | #3E9489 rio #
 # --------------------------------------------------------------------------- #
 st.markdown("""
 <style>
-/* --- Fonte global e fundo --- */
+:root {
+    --paper:      #F6F1E7;
+    --paper-deep: #EFE8D8;
+    --surface:    #FCFAF4;
+    --ink:        #262419;
+    --ink-soft:   #6B6552;
+    --line:       #E3DAC7;
+    --folha:      #4F6A1E;
+    --urucum:     #E02838;
+    --sol:        #E8920A;
+    --rio:        #3E9489;
+}
+
+/* --- Fonte global --- */
 html, body, [class*="css"] {
-    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* Faces geométricas (ecoam o wordmark da marca, "A" triangulares) */
+.maz-display {
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+}
+
+/* --- Faixa trançada: motivo direto da logo (4 fios cruzando) --- */
+.maz-trancado {
+    height: 8px;
+    background: repeating-linear-gradient(45deg,
+        #4F6A1E 0 14px, #E02838 14px 28px,
+        #E8920A 28px 42px, #3E9489 42px 56px);
+    background-size: 56px 56px;
+    border-radius: 999px;
+    opacity: 0.9;
+    margin-bottom: 18px;
 }
 
 /* --- Cards de KPI --- */
 .kpi-card {
-    background: #161B22;
-    border: 1px solid #21262D;
-    border-radius: 12px;
-    padding: 20px 24px;
-    text-align: center;
-    transition: border-color 0.2s;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: box-shadow 0.2s, transform 0.2s;
 }
-.kpi-card:hover { border-color: #C9A84C; }
+.kpi-card:hover { box-shadow: 0 4px 18px #2624190F; transform: translateY(-1px); }
+.kpi-cap { height: 4px; }
+.kpi-cap.folha { background: var(--folha); }
+.kpi-cap.rio   { background: var(--rio); }
+.kpi-cap.sol   { background: var(--sol); }
+.kpi-cap.urucum{ background: var(--urucum); }
+.kpi-body { padding: 16px 20px 18px; }
 .kpi-label {
-    font-size: 0.78rem;
-    color: #8B949E;
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--ink-soft);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 6px;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
 }
 .kpi-value {
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
     font-size: 1.7rem;
     font-weight: 700;
-    color: #E6EDF3;
-    line-height: 1.1;
+    color: var(--ink);
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
 }
-.kpi-value.dourado  { color: #C9A84C; }
-.kpi-value.verde    { color: #2DD4BF; }
-.kpi-value.alerta   { color: #F59E0B; }
-.kpi-value.critico  { color: #EF4444; }
+.kpi-value.folha  { color: var(--folha); }
+.kpi-value.rio    { color: var(--rio); }
+.kpi-value.sol    { color: #B97200; }
+.kpi-value.urucum { color: var(--urucum); }
 .kpi-sub {
     font-size: 0.72rem;
-    color: #8B949E;
-    margin-top: 4px;
+    color: var(--ink-soft);
+    margin-top: 8px;
 }
 
 /* --- Cabeçalho principal --- */
 .header-container {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 8px 0 24px 0;
-    border-bottom: 1px solid #21262D;
-    margin-bottom: 28px;
+    gap: 18px;
+    padding: 4px 0 18px 0;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 24px;
+}
+.header-divider { width: 1px; height: 46px; background: var(--line); }
+.header-eyebrow {
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    margin-bottom: 3px;
 }
 .header-title {
-    font-size: 1.6rem;
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+    font-size: 1.25rem;
     font-weight: 700;
-    color: #E6EDF3;
+    color: var(--ink);
     margin: 0;
-}
-.header-sub {
-    font-size: 0.85rem;
-    color: #8B949E;
-    margin: 0;
-}
-.badge-beta {
-    background: #C9A84C22;
-    border: 1px solid #C9A84C;
-    color: #C9A84C;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 20px;
-    letter-spacing: 0.1em;
-    vertical-align: middle;
+    letter-spacing: 0.01em;
 }
 
 /* --- Seções --- */
 .section-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #8B949E;
+    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--ink);
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    margin: 28px 0 12px 0;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #21262D;
+    letter-spacing: 0.14em;
+    margin: 30px 0 14px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
 }
 
 /* --- Barra de progresso customizada --- */
 .progress-bar-container {
-    background: #21262D;
-    border-radius: 8px;
+    background: var(--paper-deep);
+    border-radius: 999px;
     height: 8px;
     margin-top: 8px;
     overflow: hidden;
 }
 .progress-bar-fill {
     height: 100%;
-    border-radius: 8px;
-    background: linear-gradient(90deg, #C9A84C, #2DD4BF);
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--folha), var(--rio));
     transition: width 0.6s ease;
 }
 
 /* --- Tabela de dados --- */
 div[data-testid="stDataFrame"] {
-    border: 1px solid #21262D;
-    border-radius: 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
     overflow: hidden;
 }
 
 /* --- Sidebar --- */
 [data-testid="stSidebar"] {
-    background: #0D1117;
-    border-right: 1px solid #21262D;
+    background: var(--paper-deep);
+    border-right: 1px solid var(--line);
 }
 
 /* --- Upload box --- */
 [data-testid="stFileUploader"] {
-    border: 1px dashed #C9A84C44;
-    border-radius: 8px;
+    border: 1px dashed #4F6A1E55;
+    border-radius: 6px;
     padding: 8px;
 }
 
@@ -207,13 +246,30 @@ def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
     return all(c in df.columns for c in colunas)
 
 
+@st.cache_data
+def _logo_data_uri(nome_arquivo: str) -> str:
+    """Carrega uma logo da pasta assets/ como data URI (cacheado). Retorna '' se ausente."""
+    import base64
+    caminho = os.path.join(os.path.dirname(__file__), "assets", nome_arquivo)
+    try:
+        with open(caminho, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        return ""
+
+
 def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
-    """Retorna o HTML de um card de KPI."""
+    """Retorna o HTML de um card de KPI. `classe` ∈ {folha, rio, sol, urucum}."""
+    cap = f'<div class="kpi-cap {classe}"></div>' if classe else '<div class="kpi-cap folha"></div>'
     return f"""
     <div class="kpi-card">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value {classe}">{valor}</div>
-        <div class="kpi-sub">{sub}</div>
+        {cap}
+        <div class="kpi-body">
+            <div class="kpi-label">{label}</div>
+            <div class="kpi-value {classe}">{valor}</div>
+            <div class="kpi-sub">{sub}</div>
+        </div>
     </div>
     """
 
@@ -235,15 +291,23 @@ if "autenticado" not in st.session_state:
     st.session_state["login_usuario"] = None
 
 if not st.session_state["autenticado"]:
+    _logo_login = _logo_data_uri("logo_vertical.png")
+    _img_html = (
+        f'<img src="{_logo_login}" alt="Museu das Amazônias" '
+        f'style="height:150px;width:auto;margin-bottom:6px;">'
+        if _logo_login else '<div style="font-size:2.6rem;">🏛️</div>'
+    )
     st.markdown(
-        """
-        <div style="max-width:420px;margin:64px auto 0;text-align:center;">
-            <div style="font-size:2.6rem;">🏛️</div>
-            <p style="font-size:1.3rem;font-weight:700;color:#E6EDF3;margin:8px 0 2px;">
-                MAZ | Museu das Amazônias
+        f"""
+        <div class="maz-trancado" style="max-width:420px;margin:48px auto 0;"></div>
+        <div style="max-width:420px;margin:0 auto 8px;text-align:center;">
+            {_img_html}
+            <p class="maz-display" style="font-size:0.72rem;font-weight:700;color:#6B6552;
+               text-transform:uppercase;letter-spacing:0.2em;margin-top:14px;">
+                Dashboard Gerencial de Pagamentos
             </p>
-            <p style="font-size:0.85rem;color:#8B949E;margin-bottom:28px;">
-                Dashboard Gerencial de Pagamentos · IDG — Instituto de Desenvolvimento e Gestão
+            <p style="font-size:0.8rem;color:#6B6552;margin-bottom:18px;">
+                IDG — Instituto de Desenvolvimento e Gestão
             </p>
         </div>
         """,
@@ -282,15 +346,19 @@ _PAPEL_LABEL = {
 # CABEÇALHO PRINCIPAL                                                           #
 # --------------------------------------------------------------------------- #
 
-st.markdown("""
+_logo_header = _logo_data_uri("logo_horizontal.png")
+_logo_html = (
+    f'<img src="{_logo_header}" alt="Museu das Amazônias" style="height:52px;width:auto;">'
+    if _logo_header else '<div style="font-size:2.2rem;">🏛️</div>'
+)
+st.markdown('<div class="maz-trancado"></div>', unsafe_allow_html=True)
+st.markdown(f"""
 <div class="header-container">
-    <div style="font-size:2.2rem;">🏛️</div>
+    {_logo_html}
+    <div class="header-divider"></div>
     <div>
-        <p class="header-title">
-            MAZ | Museu das Amazônias
-            <span class="badge-beta">BETA</span>
-        </p>
-        <p class="header-sub">Dashboard Gerencial de Pagamentos · IDG — Instituto de Desenvolvimento e Gestão</p>
+        <span class="header-eyebrow">Gestão de Pagamentos · IDG</span>
+        <p class="header-title">Painel Gerencial</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -318,7 +386,7 @@ with st.sidebar:
     with col_user:
         st.markdown(
             f"**{st.session_state['nome_usuario']}**  \n"
-            f"<span style='color:#8B949E;font-size:0.75rem;'>{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</span>",
+            f"<span style='color:#6B6552;font-size:0.75rem;'>{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</span>",
             unsafe_allow_html=True,
         )
     with col_logout:
@@ -397,7 +465,7 @@ with st.sidebar:
                         papel_u = dados_u.get("papel", dh.PAPEL_VIEWER)
                         st.markdown(
                             f"**{dados_u.get('nome', login_u)}**  \n"
-                            f"<span style='color:#8B949E;font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
+                            f"<span style='color:#6B6552;font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
                             unsafe_allow_html=True,
                         )
                     with col_del:
@@ -585,7 +653,7 @@ with col1:
         "Orçamento Total",
         fmt_brl(kpis["orcamento_total"]),
         "Valor total contratado",
-        "dourado"
+        "folha"
     ), unsafe_allow_html=True)
 
 with col2:
@@ -593,7 +661,7 @@ with col2:
         "Total Pago",
         fmt_brl(kpis["pago"]),
         "Pagamentos realizados",
-        "verde"
+        "rio"
     ), unsafe_allow_html=True)
 
 with col3:
@@ -609,7 +677,7 @@ with col4:
         "Em Gargalo",
         fmt_brl(kpis["em_gargalo"]),
         "Aguardando desbloqueio",
-        "alerta"
+        "sol"
     ), unsafe_allow_html=True)
 
 with col5:
@@ -617,7 +685,7 @@ with col5:
         "Contratos Vencidos",
         str(kpis["vencidos"]),
         "Requer atenção imediata",
-        "critico" if kpis["vencidos"] > 0 else "verde"
+        "urucum" if kpis["vencidos"] > 0 else "folha"
     ), unsafe_allow_html=True)
 
 with col6:
@@ -625,14 +693,14 @@ with col6:
         "Execução Orçamentária",
         f"{kpis['perc_execucao']:.1f}%",
         f"{kpis['fornecedores']} fornecedores ativos",
-        "dourado"
+        "folha"
     ), unsafe_allow_html=True)
 
 # Barra de progresso da execução orçamentária
 pct = min(kpis["perc_execucao"], 100)
 st.markdown(f"""
-<div style="margin: 12px 0 4px 0; font-size:0.72rem; color:#8B949E;">
-    EXECUÇÃO ORÇAMENTÁRIA GLOBAL — {pct:.1f}% concluído
+<div class="maz-display" style="margin: 12px 0 4px 0; font-size:0.7rem; color:#6B6552; letter-spacing:0.1em; text-transform:uppercase;">
+    Execução Orçamentária Global — {pct:.1f}% concluído
 </div>
 <div class="progress-bar-container">
     <div class="progress-bar-fill" style="width:{pct}%;"></div>
@@ -676,14 +744,14 @@ with col_esq:
         fig_donut.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#E6EDF3",
+            font_color="#262419",
             showlegend=False,
             title_font_size=13,
-            title_font_color="#8B949E",
+            title_font_color="#6B6552",
             margin=dict(t=40, b=10, l=10, r=10),
             annotations=[dict(
                 text=f"<b>{fmt_brl(kpis['a_pagar'])}</b><br><span style='font-size:10px'>a pagar</span>",
-                x=0.5, y=0.5, font_size=12, showarrow=False, font_color="#E6EDF3"
+                x=0.5, y=0.5, font_size=12, showarrow=False, font_color="#4F6A1E"
             )],
         )
         st.plotly_chart(fig_donut, use_container_width=True)
@@ -707,7 +775,7 @@ with col_dir:
             orientation="h",
             title="Top 10 Fornecedores · Valor Contratado",
             color="Valor",
-            color_continuous_scale=[[0, "#1F2937"], [0.5, "#C9A84C"], [1, "#2DD4BF"]],
+            color_continuous_scale=[[0, "#C9D6B0"], [0.5, "#7FA34A"], [1, "#4F6A1E"]],
             text="Valor",
         )
         fig_bar.update_traces(
@@ -718,9 +786,9 @@ with col_dir:
         fig_bar.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#E6EDF3",
+            font_color="#262419",
             title_font_size=13,
-            title_font_color="#8B949E",
+            title_font_color="#6B6552",
             coloraxis_showscale=False,
             xaxis=dict(showgrid=False, visible=False),
             yaxis=dict(showgrid=False),
@@ -777,12 +845,12 @@ else:
         fig_gargalo.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#E6EDF3",
+            font_color="#262419",
             title_font_size=13,
-            title_font_color="#8B949E",
+            title_font_color="#6B6552",
             showlegend=False,
             xaxis=dict(showgrid=False, tickangle=-20),
-            yaxis=dict(showgrid=True, gridcolor="#21262D", visible=False),
+            yaxis=dict(showgrid=True, gridcolor="#E3DAC7", visible=False),
             margin=dict(t=50, b=60, l=10, r=10),
         )
         st.plotly_chart(fig_gargalo, use_container_width=True)
@@ -830,7 +898,7 @@ if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
             color="Situação",
             barmode="group",
             title="Pagamentos Realizados vs. Previstos por Mês",
-            color_discrete_map={"Realizado": "#2DD4BF", "Previsto": "#C9A84C"},
+            color_discrete_map={"Realizado": "#4F6A1E", "Previsto": "#E8920A"},
             text="Valor",
         )
         fig_tempo.update_traces(
@@ -841,11 +909,11 @@ if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
         fig_tempo.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#E6EDF3",
+            font_color="#262419",
             title_font_size=13,
-            title_font_color="#8B949E",
+            title_font_color="#6B6552",
             xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#21262D", visible=False),
+            yaxis=dict(showgrid=True, gridcolor="#E3DAC7", visible=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(t=60, b=40, l=10, r=10),
         )
@@ -884,16 +952,26 @@ def _fmt(v, tipo="texto"):
     return html.escape(str(v))
 
 
+# Cor do TEXTO do badge sobre fundo claro (laranja puro tem baixo contraste)
+_COR_TEXTO_BADGE = {
+    "concluido":    "#4F6A1E",
+    "em_andamento": "#2C6E64",
+    "alerta":       "#B97200",
+    "critico":      "#E02838",
+}
+
+
 def _status_badge(status: str, grupo: str) -> str:
-    """Retorna HTML do badge de status colorido."""
-    cor = dh.CORES_GRUPO.get(grupo, "#8B949E")
-    emoji = dh.EMOJI_GRUPO.get(grupo, "")
+    """Retorna HTML do badge de status colorido (tema claro)."""
+    cor = dh.CORES_GRUPO.get(grupo, "#6B6552")
+    cor_txt = _COR_TEXTO_BADGE.get(grupo, "#6B6552")
     # status pode conter caracteres especiais vindos da planilha — escapar sempre
     status_safe = html.escape(str(status))
     return (
-        f'<span style="background:{cor}22;border:1px solid {cor};color:{cor};'
-        f'font-size:0.7rem;padding:2px 8px;border-radius:20px;white-space:nowrap;">'
-        f'{emoji} {status_safe}</span>'
+        f'<span class="maz-display" style="background:{cor}1A;border:1px solid {cor}99;color:{cor_txt};'
+        f'font-size:0.62rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;'
+        f'padding:3px 10px;border-radius:999px;white-space:nowrap;">'
+        f'{status_safe}</span>'
     )
 
 
@@ -958,25 +1036,29 @@ else:
         detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
 
         badge = _status_badge(status, grupo)
+        cor_spine = dh.CORES_GRUPO.get(grupo, "#6B6552")
 
         # st.html() renderiza HTML puro sem processamento markdown,
         # eliminando interferência de caracteres especiais nos dados.
         st.html(f"""
             <div style="
-                background:#161B22;border:1px solid #21262D;border-radius:10px;
-                padding:14px 18px;margin-bottom:4px;font-family:sans-serif;
+                background:#FCFAF4;border:1px solid #E3DAC7;border-radius:6px;
+                margin-bottom:6px;font-family:sans-serif;display:flex;overflow:hidden;
             ">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                    <div>
-                        <span style="font-weight:700;color:#E6EDF3;font-size:0.95rem;">{fornecedor}</span>
-                        <span style="color:#8B949E;font-size:0.75rem;margin-left:10px;">Req. {req}</span>
+                <div style="width:5px;flex-shrink:0;background:{cor_spine};"></div>
+                <div style="flex:1;padding:14px 18px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                        <div>
+                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;font-weight:700;color:#262419;font-size:0.96rem;">{fornecedor}</span>
+                            <span style="color:#6B6552;font-size:0.74rem;margin-left:10px;letter-spacing:0.03em;">Req. {req}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;color:#262419;font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>
+                            {badge}
+                        </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:12px;">
-                        <span style="color:#C9A84C;font-weight:700;font-size:1rem;">{valor}</span>
-                        {badge}
-                    </div>
+                    {f'<div style="color:#6B6552;font-size:0.78rem;margin-top:8px;">{detalhes_html}</div>' if detalhes_html else ""}
                 </div>
-                {f'<div style="color:#8B949E;font-size:0.78rem;margin-top:6px;">{detalhes_html}</div>' if detalhes_html else ""}
             </div>
         """)
 
@@ -1032,13 +1114,12 @@ st.download_button(
 # RODAPÉ                                                                        #
 # --------------------------------------------------------------------------- #
 
+st.markdown('<div class="maz-trancado thin" style="margin-top:44px;height:5px;"></div>', unsafe_allow_html=True)
 st.markdown("""
 <div style="
-    margin-top: 48px;
-    padding-top: 16px;
-    border-top: 1px solid #21262D;
+    padding-top: 14px;
     text-align: center;
-    color: #8B949E;
+    color: #6B6552;
     font-size: 0.72rem;
 ">
     MAZ | Museu das Amazônias · IDG — Instituto de Desenvolvimento e Gestão<br>

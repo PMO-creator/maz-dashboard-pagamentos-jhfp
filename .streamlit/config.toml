@@ -1,14 +1,15 @@
 # =============================================================================
 # CONFIGURAÇÃO DE TEMA GLOBAL — MAZ Dashboard
-# Paleta corporativa: fundo escuro premium + dourado amazônico + verde-água
+# Identidade "Trançado das Amazônias": papel de galeria + 4 cores da marca
+#   verde-folha · vermelho-urucum · laranja-sol · verde-água (rio)
 # =============================================================================
 
 [theme]
-base                = "dark"
-primaryColor        = "#C9A84C"        # Dourado — cor de identidade MAZ
-backgroundColor     = "#0D1117"        # Fundo principal quase-preto (GitHub dark)
-secondaryBackgroundColor = "#161B22"   # Cards e painéis laterais
-textColor           = "#E6EDF3"        # Texto principal branco suave
+base                = "light"
+primaryColor        = "#4F6A1E"        # Verde-folha — cor primária da marca MAZ
+backgroundColor     = "#F6F1E7"        # Papel/argila — parede de galeria
+secondaryBackgroundColor = "#FCFAF4"   # Cards e painéis laterais (papel claro)
+textColor           = "#262419"        # Quase-preto com viés oliva
 font                = "sans serif"
 
 [server]
