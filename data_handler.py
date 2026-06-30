@@ -8,9 +8,138 @@
 #   Nunca somar Compra + Pagamento no mesmo indicador financeiro.
 # =============================================================================
 
+import json
+import os
 import re
+from datetime import datetime, timedelta
+
 import pandas as pd
 import streamlit as st
+
+
+# --------------------------------------------------------------------------- #
+# LOG DE ALTERAÇÕES — detecta e persiste mudanças na planilha a cada 1 hora   #
+# --------------------------------------------------------------------------- #
+
+_SNAPSHOT_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_snapshot.json")
+_LOG_FILE      = os.path.join(os.path.dirname(__file__), ".dashboard_changelog.json")
+_LOG_INTERVALO = timedelta(hours=1)
+_LOG_MAX_ENTRADAS = 300   # máximo de entradas no histórico
+
+_CAMPOS_MONITORADOS = [
+    "tipo", "fornecedor", "valor", "status",
+    "req_mxm", "data_pgto", "doc_fiscal",
+    "termino_contrato", "observacoes",
+]
+
+
+def _df_para_snapshot(df: pd.DataFrame) -> list[dict]:
+    cols = [c for c in _CAMPOS_MONITORADOS if c in df.columns]
+    return df[cols].fillna("").astype(str).to_dict(orient="records")
+
+
+def carregar_snapshot() -> tuple[list[dict], str | None]:
+    try:
+        with open(_SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("dados", []), data.get("ultima_verificacao")
+    except Exception:
+        return [], None
+
+
+def salvar_snapshot(df: pd.DataFrame) -> None:
+    data = {
+        "ultima_verificacao": datetime.now().isoformat(),
+        "dados": _df_para_snapshot(df),
+    }
+    with open(_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def carregar_log() -> list[dict]:
+    try:
+        with open(_LOG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f).get("entradas", [])
+    except Exception:
+        return []
+
+
+def salvar_log(entradas: list[dict]) -> None:
+    with open(_LOG_FILE, "w", encoding="utf-8") as f:
+        json.dump({"entradas": entradas[-_LOG_MAX_ENTRADAS:]}, f, ensure_ascii=False)
+
+
+def detectar_alteracoes(df_atual: pd.DataFrame, snapshot_ant: list[dict]) -> list[dict]:
+    """Compara o DataFrame atual com o snapshot anterior linha a linha."""
+    snap_at = _df_para_snapshot(df_atual)
+    alteracoes = []
+
+    for i in range(max(len(snap_at), len(snapshot_ant))):
+        if i >= len(snap_at):
+            row = snapshot_ant[i]
+            alteracoes.append({
+                "linha": i + 1,
+                "fornecedor": row.get("fornecedor", "—"),
+                "tipo": row.get("tipo", "—"),
+                "campo": "(linha)",
+                "de": "existia",
+                "para": "removida",
+            })
+        elif i >= len(snapshot_ant):
+            row = snap_at[i]
+            alteracoes.append({
+                "linha": i + 1,
+                "fornecedor": row.get("fornecedor", "—"),
+                "tipo": row.get("tipo", "—"),
+                "campo": "(linha)",
+                "de": "—",
+                "para": "adicionada",
+            })
+        else:
+            row_at  = snap_at[i]
+            row_ant = snapshot_ant[i]
+            for campo in _CAMPOS_MONITORADOS:
+                v_at  = row_at.get(campo, "")
+                v_ant = row_ant.get(campo, "")
+                if v_at != v_ant:
+                    alteracoes.append({
+                        "linha": i + 1,
+                        "fornecedor": row_at.get("fornecedor") or row_ant.get("fornecedor") or "—",
+                        "tipo": row_at.get("tipo", "—"),
+                        "campo": campo,
+                        "de": v_ant or "—",
+                        "para": v_at or "—",
+                    })
+
+    return alteracoes
+
+
+def verificar_e_logar(df: pd.DataFrame) -> int:
+    """Roda a cada carregamento. Só grava no log se passou 1h desde a última verificação.
+    Retorna o número de alterações detectadas (0 se ainda não era hora de verificar)."""
+    snapshot_ant, ultima_verif = carregar_snapshot()
+
+    agora = datetime.now()
+    if ultima_verif:
+        ultima_dt = datetime.fromisoformat(ultima_verif)
+        if agora - ultima_dt < _LOG_INTERVALO:
+            return 0  # ainda dentro da janela de 1h, não faz nada
+
+    # Passou 1h — detecta mudanças e salva novo snapshot
+    alteracoes = detectar_alteracoes(df, snapshot_ant) if snapshot_ant else []
+    salvar_snapshot(df)
+
+    if alteracoes:
+        entradas = carregar_log()
+        entradas.append({
+            "horario": agora.isoformat(),
+            "total": len(alteracoes),
+            "alteracoes": alteracoes,
+        })
+        salvar_log(entradas)
+        return len(alteracoes)
+
+    return 0
 
 
 # --------------------------------------------------------------------------- #

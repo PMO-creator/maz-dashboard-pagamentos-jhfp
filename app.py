@@ -307,6 +307,46 @@ with st.sidebar:
                     st.session_state["admin_autenticado"] = False
                     st.rerun()
 
+    # ------------------------------------------------------------------ #
+    # Log de Alterações                                                    #
+    # ------------------------------------------------------------------ #
+    st.markdown("---")
+    with st.expander("📋 Log de Alterações", expanded=False):
+        entradas_log = dh.carregar_log()
+        if not entradas_log:
+            st.caption("Nenhuma alteração registrada ainda.\nO dashboard verifica mudanças a cada 1 hora automaticamente.")
+        else:
+            # Mostra as últimas 20 entradas, mais recentes primeiro
+            for entrada in reversed(entradas_log[-20:]):
+                horario_str = datetime.fromisoformat(entrada["horario"]).strftime("%d/%m/%Y %H:%M")
+                total = entrada.get("total", len(entrada.get("alteracoes", [])))
+                st.markdown(
+                    f"**🕐 {horario_str}** — {total} alteração{'ões' if total != 1 else ''}",
+                )
+                for alt in entrada.get("alteracoes", []):
+                    linha   = alt.get("linha", "?")
+                    forn    = alt.get("fornecedor", "—")
+                    tipo    = alt.get("tipo", "")
+                    campo   = alt.get("campo", "—")
+                    de_val  = alt.get("de", "—")
+                    para    = alt.get("para", "—")
+
+                    if campo == "(linha)":
+                        if para == "adicionada":
+                            st.caption(f"  ➕ Linha {linha} · {tipo} · {forn} — nova linha")
+                        else:
+                            st.caption(f"  ➖ Linha {linha} · {tipo} · {forn} — removida")
+                    else:
+                        _NOMES_CAMPOS = {
+                            "status": "Status", "valor": "Valor", "fornecedor": "Fornecedor",
+                            "req_mxm": "Req. MXM", "data_pgto": "Data Pgto",
+                            "doc_fiscal": "Doc. Fiscal", "termino_contrato": "Término",
+                            "observacoes": "Observações", "tipo": "Tipo",
+                        }
+                        campo_label = _NOMES_CAMPOS.get(campo, campo)
+                        st.caption(f"  ✏️ Linha {linha} · {forn} · **{campo_label}**: {de_val} → {para}")
+                st.divider()
+
     # Upload manual (disponível para todos)
     st.markdown("### 📎 Upload Manual")
     arquivo = st.file_uploader(
@@ -346,6 +386,8 @@ elif sheets_url_input:
     try:
         df = dh.carregar_do_sheets(url_csv)
         fonte_dados = "🔄 Google Sheets · atualiza automaticamente a cada 5 min"
+        # Verifica mudanças a cada 1h e registra no log (operação silenciosa)
+        dh.verificar_e_logar(df)
     except Exception as e:
         st.error(
             "❌ Não foi possível acessar a planilha. Verifique se ela está compartilhada "
