@@ -1,0 +1,12 @@
+# Credenciais — nunca subir para o GitHub
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Planilhas locais
+*.xlsx
+*.xls
+*.csv

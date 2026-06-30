@@ -8,6 +8,7 @@
 #   Nunca somar Compra + Pagamento no mesmo indicador financeiro.
 # =============================================================================
 
+import re
 import pandas as pd
 import streamlit as st
 
@@ -61,12 +62,56 @@ EMOJI_GRUPO = {
 }
 
 
-@st.cache_data(show_spinner="Carregando e processando dados...")
+def sheets_url_para_csv(url: str) -> str | None:
+    """
+    Converte qualquer variante de URL do Google Sheets para a URL
+    de exportação direta em CSV (sem autenticação — planilha pública).
+
+    Formatos aceitos:
+      - https://docs.google.com/spreadsheets/d/ID/edit#gid=GID
+      - https://docs.google.com/spreadsheets/d/ID/edit?usp=sharing
+      - https://docs.google.com/spreadsheets/d/ID/pub?gid=GID&...
+      - https://docs.google.com/spreadsheets/d/ID/   (aba padrão)
+
+    Retorna None se a URL não for reconhecida como Google Sheets.
+    """
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+    if not match:
+        return None
+
+    sheet_id = match.group(1)
+
+    # Tenta extrair o gid (aba específica)
+    gid_match = re.search(r"[#&?]gid=(\d+)", url)
+    gid = gid_match.group(1) if gid_match else "0"
+
+    return (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        f"/export?format=csv&gid={gid}"
+    )
+
+
+# TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min
+# automaticamente, sem o usuário precisar fazer nada.
+@st.cache_data(ttl=300, show_spinner="Sincronizando com Google Sheets...")
+def carregar_do_sheets(url_csv: str) -> pd.DataFrame:
+    """
+    Lê a planilha diretamente do Google Sheets via URL de exportação CSV.
+    Requer que a planilha esteja compartilhada como 'qualquer pessoa com o link'.
+    O cache TTL=300s garante atualização automática a cada 5 minutos.
+    """
+    df = pd.read_csv(url_csv, encoding="utf-8-sig")
+    df = _normalizar_colunas(df)
+    df = _converter_tipos(df)
+    df = _enriquecer(df)
+    return df
+
+
+@st.cache_data(show_spinner="Carregando arquivo...")
 def carregar_dados(arquivo) -> pd.DataFrame:
     """
-    Carrega o arquivo Excel ou CSV enviado pelo usuário,
-    normaliza colunas e converte tipos de dados.
-    O cache do Streamlit evita reprocessamento a cada interação.
+    Carrega arquivo Excel ou CSV enviado manualmente pelo usuário.
+    Fallback quando o Google Sheets não está configurado.
     """
     nome = arquivo.name.lower()
 

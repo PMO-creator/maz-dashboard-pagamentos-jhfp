@@ -199,61 +199,104 @@ st.markdown("""
 
 
 # --------------------------------------------------------------------------- #
-# SIDEBAR — Upload de dados e filtros interativos                               #
+# SIDEBAR — Fonte de dados e filtros interativos                                #
 # --------------------------------------------------------------------------- #
 
 with st.sidebar:
     st.markdown("### 📂 Fonte de Dados")
+
+    # Lê a URL salva nas secrets do Streamlit (configurada 1x no deploy)
+    # Se não existir secrets, usa session_state como fallback local
+    url_salva = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
+    if not url_salva:
+        url_salva = st.session_state.get("sheets_url", "")
+
+    # Campo para colar o link do Google Sheets
+    sheets_url_input = st.text_input(
+        "🔗 Link do Google Sheets",
+        value=url_salva,
+        placeholder="https://docs.google.com/spreadsheets/d/...",
+        help="Cole o link da planilha compartilhada como 'qualquer pessoa com o link pode ver'.",
+    )
+
+    # Salva na session para persistir durante a sessão do navegador
+    if sheets_url_input:
+        st.session_state["sheets_url"] = sheets_url_input
+
+    st.markdown("ou")
+
+    # Fallback: upload manual
     arquivo = st.file_uploader(
-        "Envie a planilha (.xlsx ou .csv)",
+        "📎 Upload manual (.xlsx ou .csv)",
         type=["xlsx", "xls", "csv"],
-        help="A planilha deve conter as colunas: Tipo, Fornecedor, Valor, Status, etc.",
+        help="Alternativa ao Google Sheets. O upload tem prioridade sobre o link.",
     )
 
     st.markdown("---")
-
-    # Filtros só aparecem após o upload
-    if arquivo:
-        st.markdown("### 🎛️ Filtros")
+    st.markdown("### 🎛️ Filtros")
 
 
 # --------------------------------------------------------------------------- #
-# ESTADO: sem arquivo carregado                                                 #
+# CARREGAMENTO E PROCESSAMENTO DOS DADOS                                        #
+# Prioridade: 1) Upload manual  2) Google Sheets  3) Tela de boas-vindas       #
 # --------------------------------------------------------------------------- #
 
-if not arquivo:
-    st.info(
-        "👈  **Faça o upload da sua planilha** na barra lateral para visualizar o dashboard.",
-        icon="📊",
-    )
-    # Mostra preview da estrutura esperada
+df = None
+fonte_dados = None
+
+if arquivo:
+    # Upload manual tem prioridade (útil para testes pontuais)
+    df = dh.carregar_dados(arquivo)
+    fonte_dados = f"📎 Arquivo: `{arquivo.name}`"
+
+elif sheets_url_input:
+    # Sincronização automática com Google Sheets
+    url_csv = dh.sheets_url_para_csv(sheets_url_input)
+
+    if url_csv is None:
+        st.error(
+            "❌ URL não reconhecida como Google Sheets. "
+            "Cole o link completo da planilha (deve conter `/spreadsheets/d/`)."
+        )
+        st.stop()
+
+    try:
+        df = dh.carregar_do_sheets(url_csv)
+        fonte_dados = "🔄 Google Sheets · atualiza automaticamente a cada 5 min"
+    except Exception as e:
+        st.error(
+            "❌ Não foi possível acessar a planilha. Verifique se ela está compartilhada "
+            "como **'Qualquer pessoa com o link pode ver'** e tente novamente.\n\n"
+            f"Detalhe técnico: `{e}`"
+        )
+        st.stop()
+
+else:
+    # Tela de boas-vindas — nenhuma fonte configurada
+    st.info("👈  **Cole o link do Google Sheets** ou faça o upload da planilha para visualizar o dashboard.", icon="📊")
     st.markdown('<p class="section-title">Estrutura esperada da planilha</p>', unsafe_allow_html=True)
     preview = pd.DataFrame({
-        "Tipo":             ["Compra", "Pagamento", "Pagamento"],
-        "Fornecedor":       ["Empresa Exemplo Ltda", "Empresa Exemplo Ltda", "Empresa Exemplo Ltda"],
-        "Req. MXM":         ["REQ-001", "REQ-001", "REQ-001"],
-        "Valor":            ["R$ 30.000,00", "R$ 15.000,00", "R$ 15.000,00"],
-        "Descritivo":       ["Contrato de Serviços", "Parcela 1/2", "Parcela 2/2"],
-        "Status":           ["Contrato/Template em aberto", "Pago", "Aprovado"],
-        "Data pgto":        ["—", "01/05/2025", "01/06/2025"],
+        "Tipo":       ["Compra", "Pagamento", "Pagamento"],
+        "Fornecedor": ["Empresa Exemplo Ltda"] * 3,
+        "Req. MXM":   ["REQ-001"] * 3,
+        "Valor":      ["R$ 30.000,00", "R$ 15.000,00", "R$ 15.000,00"],
+        "Descritivo": ["Contrato de Serviços", "Parcela 1/2", "Parcela 2/2"],
+        "Status":     ["Contrato/Template em aberto", "Pago", "Aprovado"],
+        "Data pgto":  ["—", "01/05/2025", "01/06/2025"],
     })
     st.dataframe(preview, use_container_width=True, hide_index=True)
     st.caption("⚠️ A coluna **Tipo** é essencial para separar orçamento (Compra) de fluxo de caixa (Pagamento) sem duplicar valores.")
     st.stop()
 
-
-# --------------------------------------------------------------------------- #
-# CARREGAMENTO E PROCESSAMENTO DOS DADOS                                        #
-# --------------------------------------------------------------------------- #
-
-df = dh.carregar_dados(arquivo)
-
-if df.empty:
+if df is None or df.empty:
     st.error("A planilha parece estar vazia ou com formato incompatível. Verifique o arquivo e tente novamente.")
     st.stop()
 
 df_compras, df_pag = dh.separar_por_tipo(df)
 kpis = dh.calcular_kpis(df)
+
+# Indicador discreto de fonte e última atualização
+st.caption(fonte_dados)
 
 
 # --------------------------------------------------------------------------- #
