@@ -202,46 +202,77 @@ st.markdown("""
 # SIDEBAR — Fonte de dados e filtros interativos                                #
 # --------------------------------------------------------------------------- #
 
+# Lê credenciais de administrador das Secrets do Streamlit.
+# NUNCA hardcode senhas no código — elas ficam apenas no painel do Streamlit Cloud.
+_ADMIN_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
+_ADMIN_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
+
+# Lê configurações de fonte de dados das Secrets (valores padrão fixados pelo admin)
+_url_secrets  = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
+_aba_secrets  = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+
+# Inicializa estado de autenticação do administrador na sessão
+if "admin_autenticado" not in st.session_state:
+    st.session_state["admin_autenticado"] = False
+
+# Usa os valores das Secrets como padrão; o admin pode sobrescrever via UI
+sheets_url_input = st.session_state.get("sheets_url", _url_secrets)
+nome_aba_input   = st.session_state.get("sheets_aba", _aba_secrets)
+
 with st.sidebar:
-    st.markdown("### 📂 Fonte de Dados")
 
-    # Lê a URL salva nas secrets do Streamlit (configurada 1x no deploy)
-    # Se não existir secrets, usa session_state como fallback local
-    url_salva = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
-    if not url_salva:
-        url_salva = st.session_state.get("sheets_url", "")
+    # ------------------------------------------------------------------ #
+    # Seção de configuração — protegida por login de administrador         #
+    # ------------------------------------------------------------------ #
+    with st.expander("⚙️ Configurações", expanded=not bool(sheets_url_input)):
 
-    # Campo para colar o link do Google Sheets
-    sheets_url_input = st.text_input(
-        "🔗 Link do Google Sheets",
-        value=url_salva,
-        placeholder="https://docs.google.com/spreadsheets/d/...",
-        help="Cole o link da planilha compartilhada como 'qualquer pessoa com o link pode ver'.",
-    )
+        if not st.session_state["admin_autenticado"]:
+            # Formulário de login — submetido com Enter ou botão
+            with st.form("form_admin", clear_on_submit=False):
+                st.caption("Acesso restrito a administradores.")
+                login_input = st.text_input("Login", placeholder="seu login")
+                senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
+                entrar = st.form_submit_button("Entrar", use_container_width=True)
 
-    # Nome da aba — essencial quando a planilha tem múltiplas abas
-    aba_salva = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
-    if not aba_salva:
-        aba_salva = st.session_state.get("sheets_aba", "")
+            if entrar:
+                if login_input == _ADMIN_LOGIN and senha_input == _ADMIN_SENHA:
+                    st.session_state["admin_autenticado"] = True
+                    st.rerun()
+                else:
+                    st.error("Login ou senha incorretos.")
+        else:
+            # Admin autenticado — exibe campos de configuração
+            st.success("✅ Administrador autenticado")
 
-    nome_aba_input = st.text_input(
-        "📑 Nome da aba",
-        value=aba_salva,
-        placeholder="Ex: Pagamentos 2025",
-        help="Digite o nome exato da aba que contém os dados (case sensitive). Deixe vazio para usar a primeira aba.",
-    )
+            novo_url = st.text_input(
+                "🔗 Link do Google Sheets",
+                value=sheets_url_input,
+                placeholder="https://docs.google.com/spreadsheets/d/...",
+            )
+            nova_aba = st.text_input(
+                "📑 Nome da aba",
+                value=nome_aba_input,
+                placeholder="Ex: Pagamentos 2025",
+                help="Nome exato da aba (case sensitive).",
+            )
 
-    # Salva na session para persistir durante a sessão do navegador
-    if sheets_url_input:
-        st.session_state["sheets_url"] = sheets_url_input
-    if nome_aba_input:
-        st.session_state["sheets_aba"] = nome_aba_input
+            col_s, col_l = st.columns(2)
+            with col_s:
+                if st.button("💾 Salvar", use_container_width=True):
+                    st.session_state["sheets_url"] = novo_url
+                    st.session_state["sheets_aba"] = nova_aba
+                    sheets_url_input = novo_url
+                    nome_aba_input   = nova_aba
+                    st.rerun()
+            with col_l:
+                if st.button("🔒 Sair", use_container_width=True):
+                    st.session_state["admin_autenticado"] = False
+                    st.rerun()
 
-    st.markdown("ou")
-
-    # Fallback: upload manual
+    # Fallback: upload manual (disponível para todos, sem autenticação)
+    st.markdown("### 📎 Upload Manual")
     arquivo = st.file_uploader(
-        "📎 Upload manual (.xlsx ou .csv)",
+        "Planilha (.xlsx ou .csv)",
         type=["xlsx", "xls", "csv"],
         help="Alternativa ao Google Sheets. O upload tem prioridade sobre o link.",
     )
