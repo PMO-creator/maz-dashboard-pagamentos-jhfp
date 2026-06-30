@@ -169,6 +169,11 @@ def fmt_brl(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
+    """Verifica se TODAS as colunas listadas existem no dataframe."""
+    return all(c in df.columns for c in colunas)
+
+
 def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
     """Retorna o HTML de um card de KPI."""
     return f"""
@@ -471,7 +476,7 @@ col_esq, col_dir = st.columns([1.1, 0.9])
 
 # --- Gráfico 1: Distribuição por Situação do Fluxo (donut chart) ---
 with col_esq:
-    if "status" in df_pag.columns:
+    if tem_colunas(df_pag, "status", "valor"):
         contagem_status = df_pag.groupby("status")["valor"].sum().reset_index()
         contagem_status.columns = ["Status", "Valor"]
         contagem_status = contagem_status[contagem_status["Valor"] > 0]
@@ -511,7 +516,7 @@ with col_esq:
 
 # --- Gráfico 2: Top 10 Fornecedores por Valor Contratado (barras horizontais) ---
 with col_dir:
-    if "fornecedor" in df_compras.columns and "valor" in df_compras.columns:
+    if tem_colunas(df_compras, "fornecedor", "valor"):
         top_fornecedores = (
             df_compras.groupby("fornecedor")["valor"]
             .sum()
@@ -564,13 +569,12 @@ df_gargalo = (
     else pd.DataFrame()
 )
 
-if df_gargalo.empty:
+if df_gargalo.empty or not tem_colunas(df_gargalo, "status", "valor"):
     st.success("✅ Nenhum pagamento em situação de gargalo no momento.")
 else:
     col_g1, col_g2 = st.columns([1.2, 0.8])
 
     with col_g1:
-        # Gráfico de barras: valor parado por status de gargalo
         gargalo_agrupado = (
             df_gargalo.groupby("status")["valor"]
             .sum()
@@ -581,7 +585,6 @@ else:
         gargalo_agrupado["Grupo"] = gargalo_agrupado["Status"].map(
             lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
         )
-        gargalo_agrupado["Cor"] = gargalo_agrupado["Grupo"].map(dh.CORES_GRUPO)
 
         fig_gargalo = px.bar(
             gargalo_agrupado,
@@ -611,18 +614,18 @@ else:
         st.plotly_chart(fig_gargalo, use_container_width=True)
 
     with col_g2:
-        # Tabela resumo de gargalos por fornecedor
-        st.markdown("**Fornecedores com maior valor bloqueado**")
-        gargalo_forn = (
-            df_gargalo.groupby("fornecedor")["valor"]
-            .sum()
-            .sort_values(ascending=False)
-            .head(8)
-            .reset_index()
-        )
-        gargalo_forn.columns = ["Fornecedor", "Valor Bloqueado"]
-        gargalo_forn["Valor Bloqueado"] = gargalo_forn["Valor Bloqueado"].apply(fmt_brl)
-        st.dataframe(gargalo_forn, use_container_width=True, hide_index=True)
+        if tem_colunas(df_gargalo, "fornecedor", "valor"):
+            st.markdown("**Fornecedores com maior valor bloqueado**")
+            gargalo_forn = (
+                df_gargalo.groupby("fornecedor")["valor"]
+                .sum()
+                .sort_values(ascending=False)
+                .head(8)
+                .reset_index()
+            )
+            gargalo_forn.columns = ["Fornecedor", "Valor Bloqueado"]
+            gargalo_forn["Valor Bloqueado"] = gargalo_forn["Valor Bloqueado"].apply(fmt_brl)
+            st.dataframe(gargalo_forn, use_container_width=True, hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -631,11 +634,10 @@ else:
 
 st.markdown('<p class="section-title">📅 Fluxo Temporal de Pagamentos</p>', unsafe_allow_html=True)
 
-if "mes_pgto" in df_pag.columns and "valor" in df_pag.columns:
+if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
     df_tempo = df_pag.dropna(subset=["mes_pgto"])
 
     if not df_tempo.empty:
-        # Agrupa por mês e status (pago x a pagar)
         df_tempo["Situacao"] = df_tempo["status"].apply(
             lambda s: "Realizado" if s == "Pago" else "Previsto"
         )
