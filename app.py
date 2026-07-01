@@ -748,7 +748,17 @@ _, df_pag_filtrado = dh.separar_por_tipo(df_filtrado)
 # Diferente da leitura (link público), a escrita exige credenciais próprias.  #
 # --------------------------------------------------------------------------- #
 
-if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+@st.fragment
+def _bloco_novo_lancamento():
+    """
+    Isolado com @st.fragment: interações aqui dentro (trocar de aba, digitar,
+    enviar o formulário) recarregam só este bloco, sem re-renderizar o resto
+    do dashboard (KPIs, gráficos, todos os cards de contrato) — evita a
+    lentidão de recarregar a página inteira a cada clique nesta seção.
+    """
+    if _papel_usuario not in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+        return
+
     secao_titulo("➕ Novo Lançamento")
 
     if "gcp_service_account" not in st.secrets:
@@ -846,6 +856,9 @@ if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
                             st.rerun()
                         except Exception as e:
                             st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+
+
+_bloco_novo_lancamento()
 
 
 # --------------------------------------------------------------------------- #
