@@ -467,14 +467,18 @@ st.markdown(f"""
 # SIDEBAR — Fonte de dados e filtros interativos                                #
 # --------------------------------------------------------------------------- #
 
-# Prioridade de configuração: 1) Secrets  2) Arquivo local (5 dias)  3) Vazio
+# Prioridade de configuração: 1) Arquivo local (5 dias, editável em Configurações)
+#                              2) Secrets (valor inicial, antes da 1ª configuração)
+#                              3) Vazio
+# Secrets deixou de ser uma trava fixa: agora serve só de ponto de partida,
+# para que trocar a planilha pela tela (ex: alternar entre cópia de teste e
+# produção) tenha efeito de verdade, sem precisar editar Secrets a cada troca.
 _url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
 _aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
 _cfg_disk    = _ler_config_persistente()
 
-# Carrega URL e aba: Secrets > arquivo em disco > vazio
-sheets_url_input = _url_secrets or _cfg_disk.get("sheets_url", "")
-nome_aba_input   = _aba_secrets or _cfg_disk.get("sheets_aba", "")
+sheets_url_input = _cfg_disk.get("sheets_url", "") or _url_secrets
+nome_aba_input   = _cfg_disk.get("sheets_aba", "") or _aba_secrets
 
 with st.sidebar:
 
