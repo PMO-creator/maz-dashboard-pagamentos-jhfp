@@ -240,29 +240,44 @@ div[data-testid="stDataFrame"] {
 }
 .maz-trancado.maz-flow { animation: maz-flow 3.2s linear infinite; }
 
-/* Cobra deslizando pela tela UMA vez, ao carregar, e saindo */
-@keyframes maz-cobra-glide {
-    0%   { transform: translateX(-55vw) rotate(-1deg); opacity: 0; }
-    10%  { opacity: 0.95; }
-    90%  { opacity: 0.95; }
-    100% { transform: translateX(125vw) rotate(-1deg); opacity: 0; }
-}
-.maz-cobra-login {
+/* Cobra lateral, minimalista: fixa na borda direita, cabeça no topo,
+   corpo em ladrilho repetido até o fim da tela — sem deslocamento. */
+.maz-cobra-lateral {
     position: fixed;
-    top: 14%;
-    left: 0;
-    width: 300px;
-    height: auto;
+    top: 0;
+    right: 22px;
+    width: 26px;
+    height: 100vh;
     z-index: 0;
     pointer-events: none;
-    opacity: 0;
-    animation: maz-cobra-glide 7s cubic-bezier(0.45, 0, 0.55, 1) 0.5s 1 forwards;
+}
+.maz-cobra-lateral .cabeca {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: auto;
+    display: block;
+}
+.maz-cobra-lateral .corpo {
+    /* 41px = altura real da cabeça (proporção 64:101) na largura de 26px da fita */
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 41px;
+    bottom: 0;
+    background-repeat: repeat-y;
+    background-size: 100% auto;
 }
 
-/* Acessibilidade: quem prefere menos movimento não vê animação */
+/* Acessibilidade: quem prefere menos movimento não vê a barra fluir */
 @media (prefers-reduced-motion: reduce) {
     .maz-trancado.maz-flow { animation: none; }
-    .maz-cobra-login { display: none; }
+}
+
+/* Em telas estreitas a fita lateral compete com o formulário — oculta */
+@media (max-width: 680px) {
+    .maz-cobra-lateral { display: none; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -293,6 +308,24 @@ def _logo_data_uri(nome_arquivo: str) -> str:
         return f"data:image/png;base64,{b64}"
     except Exception:
         return ""
+
+
+def cobra_lateral() -> None:
+    """Renderiza a cobra decorativa fixa na lateral direita (cabeça no topo,
+    corpo em ladrilho repetido) — usada apenas na tela de login."""
+    cabeca = _logo_data_uri("cobra_lateral_head.png")
+    tile   = _logo_data_uri("cobra_lateral_tile.png")
+    if not cabeca or not tile:
+        return
+    st.markdown(
+        f"""
+        <div class="maz-cobra-lateral">
+            <img class="cabeca" src="{cabeca}" alt="">
+            <div class="corpo" style="background-image:url({tile});"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def estado_vazio(mensagem: str) -> None:
@@ -355,19 +388,14 @@ if "autenticado" not in st.session_state:
     st.session_state["login_usuario"] = None
 
 if not st.session_state["autenticado"]:
-    _logo_login   = _logo_data_uri("logo_vertical.png")
-    _cobra_login  = _logo_data_uri("cobra_login.png")
+    _logo_login = _logo_data_uri("logo_vertical.png")
     _img_html = (
         f'<img src="{_logo_login}" alt="Museu das Amazônias" '
         f'style="height:150px;width:auto;margin-bottom:6px;">'
         if _logo_login else '<div style="font-size:2.6rem;">🏛️</div>'
     )
-    # Cobra que desliza pela tela uma vez, ao carregar (momento de marca)
-    if _cobra_login:
-        st.markdown(
-            f'<img class="maz-cobra-login" src="{_cobra_login}" alt="">',
-            unsafe_allow_html=True,
-        )
+    # Cobra fixa na lateral direita — cabeça no topo, minimalista
+    cobra_lateral()
     st.markdown(
         f"""
         <div class="maz-trancado maz-flow" style="max-width:420px;margin:48px auto 26px;"></div>
