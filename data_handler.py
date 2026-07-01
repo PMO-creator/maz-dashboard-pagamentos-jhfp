@@ -438,11 +438,29 @@ def _copiar_formula_ajustada(ws: gspread.Worksheet, col_1based: int, linha_orige
         pass  # Cosmético — a ausência da fórmula não impede o lançamento
 
 
-def inserir_compra(sheets_url: str, nome_aba: str, dados: dict) -> None:
+def descritivo_parcela(indice: int, total: int) -> str:
     """
-    Grava uma nova linha 'Compra' ao final da planilha.
-    `dados` deve conter os campos lógicos (fornecedor, req_mxm, valor, ...);
-    'tipo' é forçado para 'Compra' independente do que vier em `dados`.
+    Regra de descritivo das parcelas:
+      - 1 parcela  → "Parcela única"
+      - N parcelas → "1ª Parcela", "2ª Parcela", ...
+    `indice` é 0-based.
+    """
+    if total <= 1:
+        return "Parcela única"
+    return f"{indice + 1}ª Parcela"
+
+
+def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
+                                dados_compra: dict, parcelas: list[dict]) -> None:
+    """
+    Grava, em uma única operação, a linha 'Compra' seguida das suas linhas
+    'Pagamento' (parcelas) — contíguas e nesta ordem, garantindo o
+    agrupamento sequencial de que agrupar_hierarquia() depende.
+
+    - dados_compra: campos lógicos do pedido (fornecedor, req_mxm, valor, ...)
+    - parcelas: lista de dicts, cada um com valor/status/doc_fiscal/data_pgto.
+      O 'descritivo' de cada parcela é definido automaticamente
+      (ver descritivo_parcela); o 'tipo' é forçado em cada linha.
     """
     ws = conectar_planilha_autenticada(sheets_url, nome_aba)
     valores = ws.get_all_values()
@@ -450,74 +468,34 @@ def inserir_compra(sheets_url: str, nome_aba: str, dados: dict) -> None:
     mapa_col = _mapear_colunas_planilha(valores[header_row])
     n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
 
-    nova_linha = [""] * n_cols
-    _preencher_linha(nova_linha, mapa_col, {**dados, "tipo": "Compra"})
-    ws.append_row(nova_linha, value_input_option="USER_ENTERED")
+    linhas: list[list] = []
 
-    # Tenta herdar a fórmula de "Dias vencimento" da última linha de dados
+    # 1) Linha da Compra
+    linha_compra = [""] * n_cols
+    _preencher_linha(linha_compra, mapa_col, {**dados_compra, "tipo": "Compra"})
+    linhas.append(linha_compra)
+
+    # 2) Linhas de Pagamento (parcelas), com descritivo automático
+    total = len(parcelas)
+    for i, p in enumerate(parcelas):
+        linha_pag = [""] * n_cols
+        _preencher_linha(linha_pag, mapa_col, {
+            **p,
+            "tipo": "Pagamento",
+            "descritivo": descritivo_parcela(i, total),
+        })
+        linhas.append(linha_pag)
+
+    # Uma única chamada de API grava todas as linhas contíguas ao final
+    ws.append_rows(linhas, value_input_option="USER_ENTERED")
+
+    # Best-effort: herda a fórmula de "Dias vencimento" para cada nova linha
     if "dias_vencimento" in mapa_col and len(valores) > header_row + 1:
-        linha_nova_1based = len(valores) + 1
-        _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, len(valores), linha_nova_1based)
-
-
-def inserir_pagamento(sheets_url: str, nome_aba: str, compra_chave: dict, dados: dict) -> None:
-    """
-    Grava uma nova linha 'Pagamento' imediatamente após o último pagamento
-    já existente da Compra indicada (ou logo abaixo da própria Compra, se for
-    o primeiro pagamento) — preserva o agrupamento por ordem sequencial.
-
-    `compra_chave`: {"fornecedor": ..., "req_mxm": ...} — identifica a Compra-alvo.
-    Lança ValueError se a Compra não for encontrada (ex: planilha mudou entre
-    o carregamento da tela e o envio do formulário).
-    """
-    ws = conectar_planilha_autenticada(sheets_url, nome_aba)
-    valores = ws.get_all_values()
-    header_row = _detectar_header_gspread(valores)
-    mapa_col = _mapear_colunas_planilha(valores[header_row])
-
-    idx_tipo = mapa_col.get("tipo")
-    idx_forn = mapa_col.get("fornecedor")
-    idx_req  = mapa_col.get("req_mxm")
-    if idx_tipo is None or idx_forn is None:
-        raise ValueError("Não foi possível identificar as colunas 'Tipo'/'Fornecedor' na planilha.")
-
-    def _campo(linha: list, idx: int | None) -> str:
-        if idx is None or idx >= len(linha):
-            return ""
-        return str(linha[idx]).strip()
-
-    linha_compra = None
-    for i in range(header_row + 1, len(valores)):
-        if _campo(valores[i], idx_tipo).title() == "Compra":
-            if _campo(valores[i], idx_forn) == str(compra_chave.get("fornecedor", "")).strip() and \
-               _campo(valores[i], idx_req) == str(compra_chave.get("req_mxm", "")).strip():
-                linha_compra = i
-                break
-
-    if linha_compra is None:
-        raise ValueError(
-            "A Compra selecionada não foi encontrada na planilha — "
-            "ela pode ter sido alterada. Atualize a página e tente novamente."
-        )
-
-    # Avança até o fim do grupo (última linha de Pagamento antes da próxima Compra)
-    linha_insercao = linha_compra + 1
-    for i in range(linha_compra + 1, len(valores)):
-        if _campo(valores[i], idx_tipo).title() == "Compra":
-            break
-        linha_insercao = i + 1
-
-    n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
-    nova_linha = [""] * n_cols
-    _preencher_linha(nova_linha, mapa_col, {**dados, "tipo": "Pagamento"})
-
-    linha_destino_1based = linha_insercao + 1
-    ws.insert_row(nova_linha, index=linha_destino_1based, value_input_option="USER_ENTERED")
-
-    # Tenta herdar a fórmula de "Dias vencimento" de uma linha vizinha do grupo
-    if "dias_vencimento" in mapa_col:
-        linha_referencia_1based = linha_insercao if linha_insercao > linha_compra + 1 else linha_compra + 1
-        _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, linha_referencia_1based, linha_destino_1based)
+        col_1based = mapa_col["dias_vencimento"] + 1
+        origem_1based = len(valores)            # última linha que já existia
+        primeira_nova_1based = len(valores) + 1
+        for offset in range(len(linhas)):
+            _copiar_formula_ajustada(ws, col_1based, origem_1based, primeira_nova_1based + offset)
 
 
 # TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min

@@ -748,13 +748,20 @@ _, df_pag_filtrado = dh.separar_por_tipo(df_filtrado)
 # Diferente da leitura (link público), a escrita exige credenciais próprias.  #
 # --------------------------------------------------------------------------- #
 
+def _limpar_wizard_lancamento() -> None:
+    """Remove do session_state todo o estado do assistente de lançamento."""
+    for k in list(st.session_state.keys()):
+        if k.startswith("np_") or k in ("lanc_etapa", "lanc_compra", "lanc_n_parcelas"):
+            del st.session_state[k]
+
+
 @st.fragment
 def _bloco_novo_lancamento():
     """
-    Isolado com @st.fragment: interações aqui dentro (trocar de aba, digitar,
-    enviar o formulário) recarregam só este bloco, sem re-renderizar o resto
-    do dashboard (KPIs, gráficos, todos os cards de contrato) — evita a
-    lentidão de recarregar a página inteira a cada clique nesta seção.
+    Assistente de lançamento em 2 etapas (Pedido de Compra → Parcelas),
+    isolado com @st.fragment para que as interações (avançar, adicionar
+    parcela, digitar) recarreguem só este bloco — não o dashboard inteiro.
+    Grava a Compra e todas as suas parcelas numa única operação.
     """
     if _papel_usuario not in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
         return
@@ -768,94 +775,112 @@ def _bloco_novo_lancamento():
             "novos pedidos e pagamentos continuam sendo lançados direto na planilha.",
             icon="ℹ️",
         )
-    else:
-        tab_compra, tab_pagamento = st.tabs(["📄 Novo Pedido de Compra", "💰 Registrar Pagamento"])
+        return
 
-        # --- Formulário 1: Novo Pedido de Compra --------------------------- #
-        with tab_compra:
-            with st.form("form_nova_compra", clear_on_submit=True):
-                c1, c2 = st.columns(2)
-                with c1:
-                    nc_fornecedor = st.text_input("Fornecedor *")
-                    nc_req_mxm    = st.text_input("Req. MXM")
-                    nc_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f")
-                    nc_status     = st.selectbox("Status inicial *", options=dh.STATUS_TODOS)
-                with c2:
-                    nc_descritivo = st.text_input("Descritivo")
-                    nc_termino    = st.date_input("Término do contrato", value=None)
-                    nc_link       = st.text_input("Link do contrato")
-                nc_observacoes = st.text_area("Observações", height=80)
+    ss = st.session_state
+    ss.setdefault("lanc_etapa", 1)
+    ss.setdefault("lanc_compra", {})
+    ss.setdefault("lanc_n_parcelas", 1)
 
-                enviar_compra = st.form_submit_button("💾 Registrar Pedido de Compra", use_container_width=True)
+    # ==================== ETAPA 1 — Pedido de Compra ==================== #
+    if ss["lanc_etapa"] == 1:
+        c = ss["lanc_compra"]
+        _opts_status = dh.STATUS_TODOS
+        _idx_status = _opts_status.index(c["status"]) if c.get("status") in _opts_status else 0
 
-            if enviar_compra:
-                if not nc_fornecedor.strip() or nc_valor <= 0:
-                    st.error("Fornecedor e Valor total são obrigatórios.")
-                else:
-                    try:
-                        dh.inserir_compra(sheets_url_input, nome_aba_input, {
-                            "fornecedor":       nc_fornecedor,
-                            "req_mxm":          nc_req_mxm,
-                            "valor":            nc_valor,
-                            "descritivo":       nc_descritivo,
-                            "status":           nc_status,
-                            "termino_contrato": nc_termino,
-                            "link_contrato":    nc_link,
-                            "observacoes":      nc_observacoes,
-                        })
-                        dh.carregar_do_sheets.clear()
-                        st.success(f"Pedido de compra de **{nc_fornecedor}** registrado na planilha.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+        with st.form("form_compra"):
+            st.markdown("**1. Dados do Pedido de Compra**")
+            col1, col2 = st.columns(2)
+            with col1:
+                f_fornecedor = st.text_input("Fornecedor *", value=c.get("fornecedor", ""))
+                f_req        = st.text_input("Req. MXM", value=c.get("req_mxm", ""))
+                f_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f", value=float(c.get("valor", 0.0)))
+                f_status     = st.selectbox("Status inicial *", options=_opts_status, index=_idx_status)
+            with col2:
+                f_descritivo = st.text_input("Descritivo", value=c.get("descritivo", ""))
+                f_termino    = st.date_input("Término do contrato", value=c.get("termino_contrato") or None)
+                f_link       = st.text_input("Link do contrato", value=c.get("link_contrato", ""))
+            f_obs = st.text_area("Observações", height=80, value=c.get("observacoes", ""))
 
-        # --- Formulário 2: Registrar Pagamento ------------------------------ #
-        with tab_pagamento:
-            if df_compras.empty:
-                st.caption("Nenhum pedido de compra cadastrado ainda para vincular um pagamento.")
+            avancar = st.form_submit_button("Avançar para pagamento  →", use_container_width=True)
+
+        if avancar:
+            if not f_fornecedor.strip() or f_valor <= 0:
+                st.error("Fornecedor e Valor total são obrigatórios.")
             else:
-                opcoes_compra = {
-                    f"{row.get('fornecedor', '—')} · Req. {row.get('req_mxm', '—')} · {row.get('descritivo', '—')}": {
-                        "fornecedor": row.get("fornecedor", ""),
-                        "req_mxm":    row.get("req_mxm", ""),
-                    }
-                    for _, row in df_compras.iterrows()
+                ss["lanc_compra"] = {
+                    "fornecedor":       f_fornecedor,
+                    "req_mxm":          f_req,
+                    "valor":            f_valor,
+                    "descritivo":       f_descritivo,
+                    "status":           f_status,
+                    "termino_contrato": f_termino,
+                    "link_contrato":    f_link,
+                    "observacoes":      f_obs,
                 }
+                ss["lanc_etapa"] = 2
+                st.rerun(scope="fragment")
+        return
 
-                with st.form("form_novo_pagamento", clear_on_submit=True):
-                    np_compra_label = st.selectbox("Pedido de Compra vinculado *", options=list(opcoes_compra.keys()))
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        np_valor      = st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f")
-                        np_status     = st.selectbox("Status *", options=dh.STATUS_TODOS)
-                    with c2:
-                        np_doc_fiscal = st.text_input("Doc. Fiscal (nº da NF)")
-                        np_data_pgto  = st.date_input("Data de pagamento", value=None)
-                    np_observacoes = st.text_area("Observações", height=80)
+    # ==================== ETAPA 2 — Condições de Pagamento ==================== #
+    c = ss["lanc_compra"]
+    st.markdown(
+        "**2. Condições de Pagamento** &nbsp;·&nbsp; "
+        f"<span style='color:#6B6552;'>{html.escape(str(c.get('fornecedor', '')))} · "
+        f"{fmt_brl(c.get('valor', 0))}</span>",
+        unsafe_allow_html=True,
+    )
+    if st.button("←  Voltar ao pedido", key="lanc_voltar"):
+        ss["lanc_etapa"] = 1
+        st.rerun(scope="fragment")
 
-                    enviar_pagamento = st.form_submit_button("💾 Registrar Pagamento", use_container_width=True)
+    n = ss["lanc_n_parcelas"]
+    for i in range(n):
+        rotulo = "Parcela única" if n == 1 else f"{i + 1}ª Parcela"
+        st.markdown(f"**{rotulo}**")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f", key=f"np_valor_{i}")
+            st.selectbox("Status *", options=dh.STATUS_TODOS, key=f"np_status_{i}")
+        with col2:
+            st.text_input("Doc. Fiscal (nº da NF)", key=f"np_doc_{i}")
+            st.date_input("Data de pagamento", value=None, key=f"np_data_{i}")
 
-                if enviar_pagamento:
-                    if np_valor <= 0:
-                        st.error("O valor da parcela é obrigatório.")
-                    else:
-                        try:
-                            dh.inserir_pagamento(
-                                sheets_url_input, nome_aba_input,
-                                opcoes_compra[np_compra_label],
-                                {
-                                    "valor":      np_valor,
-                                    "status":     np_status,
-                                    "doc_fiscal": np_doc_fiscal,
-                                    "data_pgto":  np_data_pgto,
-                                    "observacoes": np_observacoes,
-                                },
-                            )
-                            dh.carregar_do_sheets.clear()
-                            st.success("Pagamento registrado na planilha.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+    col_add, col_reg = st.columns(2)
+    with col_add:
+        if st.button("➕ Adicionar parcela", use_container_width=True, key="lanc_add"):
+            ss["lanc_n_parcelas"] += 1
+            st.rerun(scope="fragment")
+    with col_reg:
+        registrar = st.button("💾 Registrar pagamento", use_container_width=True, type="primary", key="lanc_reg")
+
+    if registrar:
+        # Coleta só as parcelas efetivamente preenchidas (valor > 0)
+        parcelas = []
+        for i in range(n):
+            valor = ss.get(f"np_valor_{i}", 0.0)
+            if valor and valor > 0:
+                parcelas.append({
+                    "valor":      valor,
+                    "status":     ss.get(f"np_status_{i}"),
+                    "doc_fiscal": ss.get(f"np_doc_{i}", ""),
+                    "data_pgto":  ss.get(f"np_data_{i}"),
+                })
+
+        if not parcelas:
+            st.error("Informe ao menos uma parcela com valor.")
+        else:
+            try:
+                dh.inserir_compra_com_parcelas(sheets_url_input, nome_aba_input, c, parcelas)
+                dh.carregar_do_sheets.clear()
+                _limpar_wizard_lancamento()
+                st.success(
+                    f"Pedido de **{c.get('fornecedor')}** e "
+                    f"{len(parcelas)} parcela(s) registrados na planilha."
+                )
+                st.rerun(scope="app")
+            except Exception as e:
+                st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
 
 _bloco_novo_lancamento()
