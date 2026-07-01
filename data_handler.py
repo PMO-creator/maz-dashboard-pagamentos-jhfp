@@ -498,6 +498,154 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
             _copiar_formula_ajustada(ws, col_1based, origem_1based, primeira_nova_1based + offset)
 
 
+# --------------------------------------------------------------------------- #
+# EDIÇÃO / EXCLUSÃO / ADIÇÃO de linhas existentes                              #
+#                                                                              #
+# A linha-alvo é identificada pela POSIÇÃO do grupo (mesma lógica sequencial  #
+# de agrupar_hierarquia): `grupo_idx` = índice da Compra na ordem da planilha #
+# e `parcela_idx` = posição da parcela dentro do grupo. Não há ID único por   #
+# linha na planilha; se a ordem mudar entre a leitura e a escrita (edição     #
+# concorrente), há risco de atingir a linha errada — aceitável para o uso     #
+# esparso e de poucos usuários deste beta.                                     #
+# --------------------------------------------------------------------------- #
+
+def _abrir_e_mapear(sheets_url: str, nome_aba: str):
+    """Abre a planilha (autenticada) e devolve (ws, valores, header_row, mapa_col)."""
+    ws = conectar_planilha_autenticada(sheets_url, nome_aba)
+    valores = ws.get_all_values()
+    header_row = _detectar_header_gspread(valores)
+    mapa_col = _mapear_colunas_planilha(valores[header_row])
+    return ws, valores, header_row, mapa_col
+
+
+def _localizar_grupos(valores: list[list[str]], header_row: int, mapa_col: dict[str, int]) -> list[dict]:
+    """
+    Replica agrupar_hierarquia() sobre os valores brutos da planilha, mas
+    devolvendo ÍNDICES DE LINHA (0-based em `valores`).
+    Retorna: [{"compra": r, "parcelas": [r, r, ...]}, ...] na ordem da planilha.
+    """
+    idx_tipo = mapa_col.get("tipo")
+    grupos: list[dict] = []
+    atual = None
+    for r in range(header_row + 1, len(valores)):
+        linha = valores[r]
+        tipo = ""
+        if idx_tipo is not None and idx_tipo < len(linha):
+            tipo = str(linha[idx_tipo]).strip().title()
+        if tipo == "Compra":
+            atual = {"compra": r, "parcelas": []}
+            grupos.append(atual)
+        elif tipo == "Pagamento" and atual is not None:
+            atual["parcelas"].append(r)
+    return grupos
+
+
+def _atualizar_campos(ws, row_1based: int, mapa_col: dict[str, int], dados: dict) -> None:
+    """Atualiza apenas as colunas mapeadas de uma linha (preserva as demais)."""
+    celulas = []
+    for campo, valor in dados.items():
+        col = mapa_col.get(campo)
+        if col is not None:
+            celulas.append(gspread.Cell(row_1based, col + 1, _formatar_valor_para_planilha(valor)))
+    if celulas:
+        ws.update_cells(celulas, value_input_option="USER_ENTERED")
+
+
+def _renumerar_descritivos(ws, grupo_idx: int) -> None:
+    """
+    Recalcula o 'descritivo' de todas as parcelas de um grupo após adição/
+    exclusão (Parcela única / 1ª Parcela / 2ª Parcela ...). Re-lê a planilha
+    para trabalhar com as posições já atualizadas.
+    """
+    valores = ws.get_all_values()
+    header_row = _detectar_header_gspread(valores)
+    mapa_col = _mapear_colunas_planilha(valores[header_row])
+    col_desc = mapa_col.get("descritivo")
+    if col_desc is None:
+        return
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos):
+        return
+    parcelas = grupos[grupo_idx]["parcelas"]
+    total = len(parcelas)
+    celulas = [
+        gspread.Cell(r + 1, col_desc + 1, descritivo_parcela(i, total))
+        for i, r in enumerate(parcelas)
+    ]
+    if celulas:
+        ws.update_cells(celulas, value_input_option="USER_ENTERED")
+
+
+_ERRO_GRUPO = ("O item não foi encontrado na planilha — ela pode ter sido "
+               "alterada. Atualize a página e tente novamente.")
+
+
+def atualizar_pedido(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dict) -> None:
+    """Atualiza os campos da linha 'Compra' do grupo indicado."""
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos):
+        raise ValueError(_ERRO_GRUPO)
+    _atualizar_campos(ws, grupos[grupo_idx]["compra"] + 1, mapa_col, dados)
+
+
+def atualizar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, parcela_idx: int, dados: dict) -> None:
+    """Atualiza os campos de uma parcela ('Pagamento') dentro do grupo."""
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos) or parcela_idx >= len(grupos[grupo_idx]["parcelas"]):
+        raise ValueError(_ERRO_GRUPO)
+    linha = grupos[grupo_idx]["parcelas"][parcela_idx] + 1
+    _atualizar_campos(ws, linha, mapa_col, dados)
+
+
+def excluir_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, parcela_idx: int) -> None:
+    """Remove uma parcela e renumera os descritivos das restantes do grupo."""
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos) or parcela_idx >= len(grupos[grupo_idx]["parcelas"]):
+        raise ValueError(_ERRO_GRUPO)
+    linha = grupos[grupo_idx]["parcelas"][parcela_idx] + 1
+    ws.delete_rows(linha)
+    _renumerar_descritivos(ws, grupo_idx)
+
+
+def excluir_pedido(sheets_url: str, nome_aba: str, grupo_idx: int) -> None:
+    """Remove a Compra e TODAS as suas parcelas (linhas contíguas)."""
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos):
+        raise ValueError(_ERRO_GRUPO)
+    g = grupos[grupo_idx]
+    inicio = g["compra"] + 1
+    fim = (g["parcelas"][-1] if g["parcelas"] else g["compra"]) + 1
+    ws.delete_rows(inicio, fim)
+
+
+def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dict) -> None:
+    """
+    Insere uma nova parcela ao final do grupo (logo após a última parcela, ou
+    logo abaixo da Compra se for a primeira) e renumera os descritivos.
+    """
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    if grupo_idx >= len(grupos):
+        raise ValueError(_ERRO_GRUPO)
+    g = grupos[grupo_idx]
+    ref = g["parcelas"][-1] if g["parcelas"] else g["compra"]   # 0-based
+    destino_1based = ref + 2                                    # linha logo abaixo
+
+    n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
+    nova = [""] * n_cols
+    _preencher_linha(nova, mapa_col, {**dados, "tipo": "Pagamento"})
+    ws.insert_row(nova, index=destino_1based, value_input_option="USER_ENTERED")
+
+    if "dias_vencimento" in mapa_col:
+        _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, ref + 1, destino_1based)
+
+    _renumerar_descritivos(ws, grupo_idx)
+
+
 # TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min
 # automaticamente, sem o usuário precisar fazer nada.
 @st.cache_data(ttl=300, show_spinner="Sincronizando com Google Sheets...")

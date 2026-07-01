@@ -711,36 +711,16 @@ if _colunas_faltando:
 # --------------------------------------------------------------------------- #
 
 with st.sidebar:
-    # Filtro por Fornecedor
-    todos_fornecedores = sorted(df["fornecedor"].dropna().unique().tolist()) if "fornecedor" in df.columns else []
-    sel_fornecedor = st.multiselect(
-        "Fornecedor",
-        options=todos_fornecedores,
-        default=[],
-        placeholder="Todos os fornecedores",
-    )
-
-    # Filtro por Grupo de Status (saúde do fluxo)
-    opcoes_grupo = {
-        "✅ Concluído":    "concluido",
-        "🔄 Em andamento": "em_andamento",
-        "⚠️ Alerta":       "alerta",
-        "🚨 Crítico":      "critico",
-    }
-    sel_grupos_label = st.multiselect(
-        "Situação do fluxo",
-        options=list(opcoes_grupo.keys()),
-        default=[],
-        placeholder="Todas as situações",
-    )
-    sel_grupos = [opcoes_grupo[l] for l in sel_grupos_label]
-
+    # Os filtros de fornecedor/situação foram substituídos pela BUSCA em
+    # destaque no topo do Detalhamento de Contratos (mais rápida de usar).
     st.markdown("---")
-    st.caption(f"**{len(df)}** registros carregados · **{df['fornecedor'].nunique() if 'fornecedor' in df.columns else 0}** fornecedores")
+    st.caption(
+        f"**{len(df)}** registros carregados · "
+        f"**{df['fornecedor'].nunique() if 'fornecedor' in df.columns else 0}** fornecedores"
+    )
 
-# Aplica filtros ao dataframe principal
-df_filtrado = dh.aplicar_filtros(df, sel_fornecedor, sel_grupos)
-_, df_pag_filtrado = dh.separar_por_tipo(df_filtrado)
+# Sem filtros de sidebar: os KPIs, gráficos e a exportação usam a base completa.
+df_filtrado = df
 
 
 # --------------------------------------------------------------------------- #
@@ -1221,6 +1201,176 @@ def _status_badge(status: str, grupo: str) -> str:
     )
 
 
+def _val_txt(v) -> str:
+    """Texto limpo para preencher inputs (NaN/None/nan → '')."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    return "" if s.lower() in ("nan", "none", "nat") else s
+
+
+def _val_num(v) -> float:
+    try:
+        return float(v) if pd.notna(v) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _val_date(v):
+    try:
+        return pd.to_datetime(v).date() if pd.notna(v) else None
+    except Exception:
+        return None
+
+
+_pode_editar = _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN)
+_escrita_ok  = "gcp_service_account" in st.secrets
+
+
+# --------------------------------------------------------------------------- #
+# DIÁLOGOS DE EDIÇÃO (modal central, fundo escurecido — st.dialog nativo)      #
+# --------------------------------------------------------------------------- #
+
+def _fechar_dialog_e_atualizar(msg: str = "") -> None:
+    dh.carregar_do_sheets.clear()
+    st.session_state.pop("edit_target", None)
+    if msg:
+        st.session_state["flash_ok"] = msg
+    st.rerun()
+
+
+@st.dialog("Editar Pedido de Compra")
+def _dialog_pedido(gi: int, atual) -> None:
+    _opts = dh.STATUS_TODOS
+    _cur = _val_txt(atual.get("status"))
+    _idx = _opts.index(_cur) if _cur in _opts else 0
+
+    col1, col2 = st.columns(2)
+    with col1:
+        f_fornecedor = st.text_input("Fornecedor *", value=_val_txt(atual.get("fornecedor")))
+        f_req        = st.text_input("Req. MXM", value=_val_txt(atual.get("req_mxm")))
+        f_valor      = st.number_input("Valor total (R$) *", min_value=0.0, step=100.0, format="%.2f", value=_val_num(atual.get("valor")))
+        f_status     = st.selectbox("Status", options=_opts, index=_idx)
+    with col2:
+        f_descritivo = st.text_input("Descritivo", value=_val_txt(atual.get("descritivo")))
+        f_termino    = st.date_input("Término do contrato", value=_val_date(atual.get("termino_contrato")))
+        f_link       = st.text_input("Link do contrato", value=_val_txt(atual.get("link_contrato")))
+    f_obs = st.text_area("Observações", value=_val_txt(atual.get("observacoes")), height=80)
+
+    c_salvar, c_cancelar = st.columns(2)
+    with c_salvar:
+        if st.button("💾 Salvar", use_container_width=True, type="primary"):
+            if not f_fornecedor.strip() or f_valor <= 0:
+                st.error("Fornecedor e Valor são obrigatórios.")
+            else:
+                try:
+                    dh.atualizar_pedido(sheets_url_input, nome_aba_input, gi, {
+                        "fornecedor": f_fornecedor, "req_mxm": f_req, "valor": f_valor,
+                        "descritivo": f_descritivo, "status": f_status,
+                        "termino_contrato": f_termino, "link_contrato": f_link,
+                        "observacoes": f_obs,
+                    })
+                    _fechar_dialog_e_atualizar("Pedido atualizado.")
+                except Exception as e:
+                    st.error(f"Erro ao salvar: `{e}`")
+    with c_cancelar:
+        if st.button("Cancelar", use_container_width=True):
+            _fechar_dialog_e_atualizar()
+
+    st.divider()
+    confirmar = st.checkbox("Confirmo excluir este pedido e **todas** as suas parcelas")
+    if st.button("🗑️ Excluir pedido", use_container_width=True, disabled=not confirmar):
+        try:
+            dh.excluir_pedido(sheets_url_input, nome_aba_input, gi)
+            _fechar_dialog_e_atualizar("Pedido excluído.")
+        except Exception as e:
+            st.error(f"Erro ao excluir: `{e}`")
+
+
+@st.dialog("Editar Parcela")
+def _dialog_parcela(gi: int, pi: int, atual) -> None:
+    _opts = dh.STATUS_TODOS
+    _cur = _val_txt(atual.get("status"))
+    _idx = _opts.index(_cur) if _cur in _opts else 0
+
+    col1, col2 = st.columns(2)
+    with col1:
+        f_valor  = st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f", value=_val_num(atual.get("valor")))
+        f_status = st.selectbox("Status", options=_opts, index=_idx)
+    with col2:
+        f_doc  = st.text_input("Doc. Fiscal (nº da NF)", value=_val_txt(atual.get("doc_fiscal")))
+        f_data = st.date_input("Data de pagamento", value=_val_date(atual.get("data_pgto")))
+
+    c_salvar, c_cancelar = st.columns(2)
+    with c_salvar:
+        if st.button("💾 Salvar", use_container_width=True, type="primary"):
+            if f_valor <= 0:
+                st.error("O valor da parcela é obrigatório.")
+            else:
+                try:
+                    dh.atualizar_parcela(sheets_url_input, nome_aba_input, gi, pi, {
+                        "valor": f_valor, "status": f_status,
+                        "doc_fiscal": f_doc, "data_pgto": f_data,
+                    })
+                    _fechar_dialog_e_atualizar("Parcela atualizada.")
+                except Exception as e:
+                    st.error(f"Erro ao salvar: `{e}`")
+    with c_cancelar:
+        if st.button("Cancelar", use_container_width=True):
+            _fechar_dialog_e_atualizar()
+
+    st.divider()
+    if st.button("🗑️ Excluir parcela", use_container_width=True):
+        try:
+            dh.excluir_parcela(sheets_url_input, nome_aba_input, gi, pi)
+            _fechar_dialog_e_atualizar("Parcela excluída.")
+        except Exception as e:
+            st.error(f"Erro ao excluir: `{e}`")
+
+
+@st.dialog("Adicionar Parcela")
+def _dialog_nova_parcela(gi: int) -> None:
+    col1, col2 = st.columns(2)
+    with col1:
+        f_valor  = st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f")
+        f_status = st.selectbox("Status", options=dh.STATUS_TODOS)
+    with col2:
+        f_doc  = st.text_input("Doc. Fiscal (nº da NF)")
+        f_data = st.date_input("Data de pagamento", value=None)
+
+    c_add, c_cancelar = st.columns(2)
+    with c_add:
+        if st.button("💾 Adicionar", use_container_width=True, type="primary"):
+            if f_valor <= 0:
+                st.error("O valor da parcela é obrigatório.")
+            else:
+                try:
+                    dh.adicionar_parcela(sheets_url_input, nome_aba_input, gi, {
+                        "valor": f_valor, "status": f_status,
+                        "doc_fiscal": f_doc, "data_pgto": f_data,
+                    })
+                    _fechar_dialog_e_atualizar("Parcela adicionada.")
+                except Exception as e:
+                    st.error(f"Erro ao adicionar: `{e}`")
+    with c_cancelar:
+        if st.button("Cancelar", use_container_width=True):
+            _fechar_dialog_e_atualizar()
+
+
+# Mensagem de sucesso após uma ação de edição (sobrevive ao rerun do diálogo)
+_flash = st.session_state.pop("flash_ok", None)
+if _flash:
+    st.success(f"✅ {_flash}")
+
+
+# ---- Busca em destaque ----
+termo = st.text_input(
+    "Buscar",
+    placeholder="🔎 Buscar por fornecedor, requisição, serviço ou nº da NF...",
+    label_visibility="collapsed",
+    key="busca_detalhamento",
+).strip().lower()
+
 # ---- Abas: Em andamento | Quitados ----
 aba_ativa = st.radio(
     "",
@@ -1230,32 +1380,63 @@ aba_ativa = st.radio(
 )
 mostrar_quitados = aba_ativa.startswith("✅")
 
-# Monta hierarquia a partir do df filtrado (mantém ordem da planilha)
-hierarquia = dh.agrupar_hierarquia(df_filtrado)
 
-# Filtra por aba ativa
 def _eh_quitado(compra) -> bool:
     status = str(compra.get("status", ""))
     grupo  = str(compra.get("grupo_status", ""))
     return status in dh.STATUS_QUITADO or grupo == "concluido"
 
-hierarquia_filtrada = [
-    (c, p) for c, p in hierarquia
-    if _eh_quitado(c) == mostrar_quitados
-]
+
+def _texto_busca(compra, pags) -> str:
+    partes = [str(compra.get(c, "")) for c in ("fornecedor", "req_mxm", "descritivo", "status", "observacoes")]
+    for _, p in pags.iterrows():
+        partes += [str(p.get(c, "")) for c in ("doc_fiscal", "status", "descritivo", "req_mxm", "fornecedor")]
+    return " ".join(partes).lower()
+
+
+# Hierarquia sobre a base COMPLETA — o índice (gi) é a posição absoluta do
+# grupo na planilha, usada para localizar a linha exata na edição/exclusão.
+hier_full = dh.agrupar_hierarquia(df)
+
+itens = []
+for gi, (compra, df_pags) in enumerate(hier_full):
+    if _eh_quitado(compra) != mostrar_quitados:
+        continue
+    if termo and termo not in _texto_busca(compra, df_pags):
+        continue
+    itens.append((gi, compra, df_pags))
+
+# Abre o diálogo de edição, se houver um alvo selecionado
+_alvo = st.session_state.get("edit_target")
+if _alvo and _pode_editar and _escrita_ok:
+    _tipo, _gi = _alvo[0], _alvo[1]
+    if _gi < len(hier_full):
+        _compra_a, _pags_a = hier_full[_gi]
+        if _tipo == "pedido":
+            _dialog_pedido(_gi, _compra_a)
+        elif _tipo == "parcela":
+            _pi = _alvo[2]
+            if _pi < len(_pags_a):
+                _dialog_parcela(_gi, _pi, _pags_a.iloc[_pi])
+            else:
+                st.session_state.pop("edit_target", None)
+        elif _tipo == "nova_parcela":
+            _dialog_nova_parcela(_gi)
+    else:
+        st.session_state.pop("edit_target", None)
 
 # Indicador de resultado
-n_contratos = len(hierarquia_filtrada)
-st.caption(f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: **{n_contratos}**")
+st.caption(
+    f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: "
+    f"**{len(itens)}**" + (f" · filtro: “{termo}”" if termo else "")
+)
 
-if not hierarquia_filtrada:
-    estado_vazio("Nenhum contrato encontrado nesta categoria com os filtros aplicados.")
+if not itens:
+    estado_vazio("Nenhum contrato encontrado com os critérios atuais.")
 else:
-    for compra, df_pags in hierarquia_filtrada:
+    for gi, compra, df_pags in itens:
 
         # --- Dados principais da Compra ---
-        # _fmt() aplica html.escape() em todos os valores de texto,
-        # evitando que conteúdo da planilha quebre a estrutura HTML do card.
         fornecedor  = _fmt(compra.get("fornecedor"))
         valor       = _fmt(compra.get("valor"), "valor")
         req         = _fmt(compra.get("req_mxm"))
@@ -1263,7 +1444,6 @@ else:
         termino     = _fmt(compra.get("termino_contrato"), "data")
         observacoes = _fmt(compra.get("observacoes"))
 
-        # Status: trata "nan" (pandas NaN convertido para string) como sem status
         status_raw = str(compra.get("status", ""))
         status     = "Sem status" if status_raw in ("nan", "", "None") else status_raw
         grupo      = str(compra.get("grupo_status", "alerta"))
@@ -1273,7 +1453,6 @@ else:
         n_parcelas   = len(df_pags) if not df_pags.empty else 0
         label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
 
-        # Linha de detalhes secundários (só mostra se houver conteúdo)
         detalhes_parts = [descritivo] if descritivo != "—" else []
         if termino != "—":
             detalhes_parts.append(f"Término: {termino}")
@@ -1284,9 +1463,7 @@ else:
         badge = _status_badge(status, grupo)
         cor_spine = dh.CORES_GRUPO.get(grupo, "#6B6552")
 
-        # st.html() renderiza HTML puro sem processamento markdown,
-        # eliminando interferência de caracteres especiais nos dados.
-        st.html(f"""
+        card_html = f"""
             <div style="
                 background:#FCFAF4;border:1px solid #E3DAC7;border-radius:6px;
                 margin-bottom:6px;font-family:sans-serif;display:flex;overflow:hidden;
@@ -1306,52 +1483,50 @@ else:
                     {f'<div style="color:#6B6552;font-size:0.78rem;margin-top:8px;">{detalhes_html}</div>' if detalhes_html else ""}
                 </div>
             </div>
-        """)
+        """
+
+        # Card + botão de editar pedido (só Owner/Admin com escrita habilitada)
+        if _pode_editar and _escrita_ok:
+            c_card, c_edit = st.columns([24, 1])
+            c_card.html(card_html)
+            if c_edit.button("✏️", key=f"edped_{gi}", help="Editar pedido de compra"):
+                st.session_state["edit_target"] = ("pedido", gi)
+                st.rerun()
+        else:
+            st.html(card_html)
 
         # --- Expansor de pagamentos/parcelas ---
-        if n_parcelas > 0:
-            with st.expander(f"＋ Ver pagamentos / parcelas{label_expand}", expanded=False):
+        with st.expander(f"＋ Ver pagamentos / parcelas{label_expand}", expanded=False):
+            if n_parcelas > 0:
+                for pi in range(len(df_pags)):
+                    prow = df_pags.iloc[pi]
+                    p_grupo = str(prow.get("grupo_status", "alerta"))
+                    p_desc  = _val_txt(prow.get("descritivo")) or "—"
+                    p_stat  = _val_txt(prow.get("status")) or "Sem status"
+                    cols = st.columns([3, 2, 2, 2, 1]) if (_pode_editar and _escrita_ok) else st.columns([3, 2, 2, 3])
+                    cols[0].markdown(f"**{p_desc}**  \n{dh.EMOJI_GRUPO.get(p_grupo, '')} <span style='font-size:0.75rem;color:#6B6552;'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
+                    cols[1].markdown(f"<span style='font-size:0.85rem;'>{_fmt(prow.get('valor'), 'valor')}</span>", unsafe_allow_html=True)
+                    cols[2].markdown(f"<span style='font-size:0.85rem;color:#6B6552;'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
+                    cols[3].markdown(f"<span style='font-size:0.85rem;color:#6B6552;'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
+                    if _pode_editar and _escrita_ok:
+                        if cols[4].button("✏️", key=f"edpar_{gi}_{pi}", help="Editar parcela"):
+                            st.session_state["edit_target"] = ("parcela", gi, pi)
+                            st.rerun()
+                    st.markdown("<hr style='margin:4px 0;border:none;border-top:1px solid #E3DAC7;'>", unsafe_allow_html=True)
+            else:
+                st.caption("Nenhuma parcela lançada para este pedido.")
 
-                # Monta tabela de pagamentos
-                colunas_pag = [c for c in [
-                    "req_mxm", "descritivo", "valor", "status",
-                    "data_pgto", "doc_fiscal", "observacoes"
-                ] if c in df_pags.columns]
-
-                df_pag_exibir = df_pags[colunas_pag].copy()
-
-                if "valor" in df_pag_exibir.columns:
-                    df_pag_exibir["valor"] = df_pag_exibir["valor"].apply(
-                        lambda v: _fmt(v, "valor")
-                    )
-                if "data_pgto" in df_pag_exibir.columns:
-                    df_pag_exibir["data_pgto"] = df_pag_exibir["data_pgto"].apply(
-                        lambda v: _fmt(v, "data")
-                    )
-                if "status" in df_pag_exibir.columns and "grupo_status" in df_pags.columns:
-                    grupos_pag = df_pags["grupo_status"].tolist()
-                    df_pag_exibir["status"] = [
-                        f"{dh.EMOJI_GRUPO.get(g, '')} {s}"
-                        for s, g in zip(df_pag_exibir["status"], grupos_pag)
-                    ]
-
-                renomear_pag = {
-                    "req_mxm": "Req. MXM", "descritivo": "Descritivo",
-                    "valor": "Valor", "status": "Status",
-                    "data_pgto": "Data Pgto", "doc_fiscal": "Doc. Fiscal",
-                    "observacoes": "Observações",
-                }
-                df_pag_exibir = df_pag_exibir.rename(
-                    columns={k: v for k, v in renomear_pag.items() if k in df_pag_exibir.columns}
-                )
-                st.dataframe(df_pag_exibir, use_container_width=True, hide_index=True)
+            if _pode_editar and _escrita_ok:
+                if st.button("➕ Adicionar parcela", key=f"addpar_{gi}", use_container_width=True):
+                    st.session_state["edit_target"] = ("nova_parcela", gi)
+                    st.rerun()
 
 # Botão de exportação
 csv_export = df_filtrado.to_csv(index=False, encoding="utf-8-sig")
 st.download_button(
-    label="⬇️  Exportar dados filtrados (.csv)",
+    label="⬇️  Exportar dados (.csv)",
     data=csv_export,
-    file_name="maz_pagamentos_filtrado.csv",
+    file_name="maz_pagamentos.csv",
     mime="text/csv",
 )
 
