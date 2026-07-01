@@ -1363,13 +1363,17 @@ if _flash:
     st.success(f"✅ {_flash}")
 
 
-# ---- Busca em destaque ----
-termo = st.text_input(
-    "Buscar",
-    placeholder="🔎 Buscar por fornecedor, requisição, serviço ou nº da NF...",
-    label_visibility="collapsed",
-    key="busca_detalhamento",
-).strip().lower()
+# ---- Busca: caixas separadas, uma por campo ----
+st.markdown(
+    "<span class='maz-display' style='font-size:0.72rem;font-weight:700;"
+    "letter-spacing:0.14em;text-transform:uppercase;color:#6B6552;'>Buscar por</span>",
+    unsafe_allow_html=True,
+)
+bc1, bc2, bc3, bc4 = st.columns(4)
+q_forn = bc1.text_input("Fornecedor", placeholder="Fornecedor", label_visibility="collapsed", key="q_forn").strip().lower()
+q_req  = bc2.text_input("Requisição", placeholder="Requisição", label_visibility="collapsed", key="q_req").strip().lower()
+q_serv = bc3.text_input("Serviço",    placeholder="Serviço",    label_visibility="collapsed", key="q_serv").strip().lower()
+q_nf   = bc4.text_input("Nº da NF",   placeholder="Nº da NF",   label_visibility="collapsed", key="q_nf").strip().lower()
 
 # ---- Abas: Em andamento | Quitados ----
 aba_ativa = st.radio(
@@ -1387,22 +1391,36 @@ def _eh_quitado(compra) -> bool:
     return status in dh.STATUS_QUITADO or grupo == "concluido"
 
 
-def _texto_busca(compra, pags) -> str:
-    partes = [str(compra.get(c, "")) for c in ("fornecedor", "req_mxm", "descritivo", "status", "observacoes")]
-    for _, p in pags.iterrows():
-        partes += [str(p.get(c, "")) for c in ("doc_fiscal", "status", "descritivo", "req_mxm", "fornecedor")]
-    return " ".join(partes).lower()
+def _passa_busca(compra, pags) -> bool:
+    """Cada caixa preenchida filtra o seu campo (lógica E entre as caixas)."""
+    if q_forn and q_forn not in str(compra.get("fornecedor", "")).lower():
+        return False
+    if q_req:
+        reqs = [str(compra.get("req_mxm", ""))] + [str(p.get("req_mxm", "")) for _, p in pags.iterrows()]
+        if q_req not in " ".join(reqs).lower():
+            return False
+    if q_serv:
+        servs = [str(compra.get("descritivo", ""))] + [str(p.get("descritivo", "")) for _, p in pags.iterrows()]
+        if q_serv not in " ".join(servs).lower():
+            return False
+    if q_nf:
+        docs = " ".join(str(p.get("doc_fiscal", "")) for _, p in pags.iterrows())
+        if q_nf not in docs.lower():
+            return False
+    return True
 
 
 # Hierarquia sobre a base COMPLETA — o índice (gi) é a posição absoluta do
 # grupo na planilha, usada para localizar a linha exata na edição/exclusão.
 hier_full = dh.agrupar_hierarquia(df)
 
+_algum_filtro = any((q_forn, q_req, q_serv, q_nf))
+
 itens = []
 for gi, (compra, df_pags) in enumerate(hier_full):
     if _eh_quitado(compra) != mostrar_quitados:
         continue
-    if termo and termo not in _texto_busca(compra, df_pags):
+    if not _passa_busca(compra, df_pags):
         continue
     itens.append((gi, compra, df_pags))
 
@@ -1428,7 +1446,7 @@ if _alvo and _pode_editar and _escrita_ok:
 # Indicador de resultado
 st.caption(
     f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: "
-    f"**{len(itens)}**" + (f" · filtro: “{termo}”" if termo else "")
+    f"**{len(itens)}**" + (" · filtro ativo" if _algum_filtro else "")
 )
 
 if not itens:
