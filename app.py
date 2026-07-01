@@ -228,6 +228,42 @@ div[data-testid="stDataFrame"] {
 
 /* Remove padding excessivo do container principal */
 .block-container { padding-top: 1.5rem; }
+
+/* --------------------------------------------------------------------- */
+/* MOTION — reservado à tela de login (momento de marca, sem distrair)   */
+/* --------------------------------------------------------------------- */
+
+/* Barra trançada fluindo — como um tear/rio em movimento contínuo */
+@keyframes maz-flow {
+    from { background-position: 0 0; }
+    to   { background-position: 56px 0; }
+}
+.maz-trancado.maz-flow { animation: maz-flow 3.2s linear infinite; }
+
+/* Cobra deslizando pela tela UMA vez, ao carregar, e saindo */
+@keyframes maz-cobra-glide {
+    0%   { transform: translateX(-55vw) rotate(-1deg); opacity: 0; }
+    10%  { opacity: 0.95; }
+    90%  { opacity: 0.95; }
+    100% { transform: translateX(125vw) rotate(-1deg); opacity: 0; }
+}
+.maz-cobra-login {
+    position: fixed;
+    top: 14%;
+    left: 0;
+    width: 300px;
+    height: auto;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    animation: maz-cobra-glide 7s cubic-bezier(0.45, 0, 0.55, 1) 0.5s 1 forwards;
+}
+
+/* Acessibilidade: quem prefere menos movimento não vê animação */
+@media (prefers-reduced-motion: reduce) {
+    .maz-trancado.maz-flow { animation: none; }
+    .maz-cobra-login { display: none; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -257,6 +293,34 @@ def _logo_data_uri(nome_arquivo: str) -> str:
         return f"data:image/png;base64,{b64}"
     except Exception:
         return ""
+
+
+def estado_vazio(mensagem: str) -> None:
+    """Renderiza um estado vazio ilustrado com a cobra da marca."""
+    cobra = _logo_data_uri("cobra_vazio.png")
+    img = f'<img src="{cobra}" alt="" style="width:220px;max-width:60%;opacity:0.85;margin-bottom:14px;">' if cobra else ""
+    st.markdown(
+        f"""
+        <div style="text-align:center;padding:40px 20px;color:#6B6552;">
+            {img}
+            <p style="font-size:0.9rem;margin:0;">{html.escape(mensagem)}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def secao_titulo(texto: str) -> None:
+    """Renderiza um título de seção com sublinhado no grafismo de cobra da marca."""
+    div = _logo_data_uri("cobra_divisor.png")
+    if div:
+        estilo = (
+            "border-bottom:none;padding-bottom:11px;"
+            f"background:url({div}) left bottom / auto 7px repeat-x;"
+        )
+    else:
+        estilo = ""
+    st.markdown(f'<p class="section-title" style="{estilo}">{texto}</p>', unsafe_allow_html=True)
 
 
 def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
@@ -291,15 +355,22 @@ if "autenticado" not in st.session_state:
     st.session_state["login_usuario"] = None
 
 if not st.session_state["autenticado"]:
-    _logo_login = _logo_data_uri("logo_vertical.png")
+    _logo_login   = _logo_data_uri("logo_vertical.png")
+    _cobra_login  = _logo_data_uri("cobra_login.png")
     _img_html = (
         f'<img src="{_logo_login}" alt="Museu das Amazônias" '
         f'style="height:150px;width:auto;margin-bottom:6px;">'
         if _logo_login else '<div style="font-size:2.6rem;">🏛️</div>'
     )
+    # Cobra que desliza pela tela uma vez, ao carregar (momento de marca)
+    if _cobra_login:
+        st.markdown(
+            f'<img class="maz-cobra-login" src="{_cobra_login}" alt="">',
+            unsafe_allow_html=True,
+        )
     st.markdown(
         f"""
-        <div class="maz-trancado" style="max-width:420px;margin:48px auto 0;"></div>
+        <div class="maz-trancado maz-flow" style="max-width:420px;margin:48px auto 26px;"></div>
         <div style="max-width:420px;margin:0 auto 8px;text-align:center;">
             {_img_html}
             <p class="maz-display" style="font-size:0.72rem;font-weight:700;color:#6B6552;
@@ -644,7 +715,7 @@ _, df_pag_filtrado = dh.separar_por_tipo(df_filtrado)
 # SEÇÃO 1 — KPI CARDS (visão macro para a diretoria)                           #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">📊 Indicadores Executivos</p>', unsafe_allow_html=True)
+secao_titulo("📊 Indicadores Executivos")
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
@@ -712,7 +783,7 @@ st.markdown(f"""
 # SEÇÃO 2 — PANORAMA GERAL (2 gráficos lado a lado)                            #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">🗺️ Panorama Geral</p>', unsafe_allow_html=True)
+secao_titulo("🗺️ Panorama Geral")
 
 col_esq, col_dir = st.columns([1.1, 0.9])
 
@@ -801,7 +872,7 @@ with col_dir:
 # SEÇÃO 3 — ANÁLISE DE GARGALOS (foco em tomada de decisão)                    #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">⚠️ Análise de Gargalos · Pagamentos Bloqueados</p>', unsafe_allow_html=True)
+secao_titulo("⚠️ Análise de Gargalos · Pagamentos Bloqueados")
 
 # Status de alerta e em andamento são os gargalos a monitorar
 status_gargalo_lista = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
@@ -874,7 +945,7 @@ else:
 # SEÇÃO 4 — FLUXO TEMPORAL DE PAGAMENTOS                                       #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">📅 Fluxo Temporal de Pagamentos</p>', unsafe_allow_html=True)
+secao_titulo("📅 Fluxo Temporal de Pagamentos")
 
 if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
     df_tempo = df_pag.dropna(subset=["mes_pgto"])
@@ -928,7 +999,7 @@ else:
 # SEÇÃO 5 — DETALHAMENTO HIERÁRQUICO (Compras + Pagamentos expansíveis)        #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<p class="section-title">📋 Detalhamento de Contratos</p>', unsafe_allow_html=True)
+secao_titulo("📋 Detalhamento de Contratos")
 
 
 def _fmt(v, tipo="texto"):
@@ -1003,7 +1074,7 @@ n_contratos = len(hierarquia_filtrada)
 st.caption(f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: **{n_contratos}**")
 
 if not hierarquia_filtrada:
-    st.info("Nenhum contrato encontrado nesta categoria com os filtros aplicados.")
+    estado_vazio("Nenhum contrato encontrado nesta categoria com os filtros aplicados.")
 else:
     for compra, df_pags in hierarquia_filtrada:
 
@@ -1114,15 +1185,24 @@ st.download_button(
 # RODAPÉ                                                                        #
 # --------------------------------------------------------------------------- #
 
-st.markdown('<div class="maz-trancado thin" style="margin-top:44px;height:5px;"></div>', unsafe_allow_html=True)
-st.markdown("""
+st.markdown('<div class="maz-trancado" style="margin-top:44px;height:5px;"></div>', unsafe_allow_html=True)
+
+# Logo do IDG (mantenedora) — aparece no rodapé quando o arquivo existir em assets/
+_logo_idg = _logo_data_uri("logo_idg.png")
+_idg_html = (
+    f'<img src="{_logo_idg}" alt="IDG — Instituto de Desenvolvimento e Gestão" '
+    f'style="height:38px;width:auto;opacity:0.7;margin-bottom:10px;">'
+    if _logo_idg else ""
+)
+st.markdown(f"""
 <div style="
-    padding-top: 14px;
+    padding-top: 16px;
     text-align: center;
     color: #6B6552;
     font-size: 0.72rem;
 ">
-    MAZ | Museu das Amazônias · IDG — Instituto de Desenvolvimento e Gestão<br>
-    Dashboard Gerencial de Pagamentos · Versão Beta 1.0 · Dados atualizados via upload manual
+    {_idg_html}
+    <div>MAZ | Museu das Amazônias · uma realização do IDG — Instituto de Desenvolvimento e Gestão</div>
+    <div>Dashboard Gerencial de Pagamentos · Versão Beta 1.0</div>
 </div>
 """, unsafe_allow_html=True)
