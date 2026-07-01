@@ -440,6 +440,38 @@ def _copiar_formula_ajustada(ws: gspread.Worksheet, col_1based: int, linha_orige
         pass  # Cosmético — a ausência da fórmula não impede o lançamento
 
 
+def _ultima_linha_do_tipo(valores: list[list[str]], header_row: int, mapa_col: dict[str, int], tipo: str) -> int | None:
+    """Índice 0-based (em `valores`) da última linha existente com o 'tipo' indicado."""
+    idx_tipo = mapa_col.get("tipo")
+    if idx_tipo is None:
+        return None
+    for r in range(len(valores) - 1, header_row, -1):
+        linha = valores[r]
+        if idx_tipo < len(linha) and str(linha[idx_tipo]).strip().title() == tipo:
+            return r
+    return None
+
+
+def _copiar_formatacao_linha(ws: gspread.Worksheet, linha_origem_1based: int, linha_destino_1based: int, n_cols: int) -> None:
+    """
+    Copia a FORMATAÇÃO VISUAL (moeda, data, cor, borda, fonte...) de uma linha
+    de referência para a nova linha, via Sheets API (copyPaste/PASTE_FORMAT).
+    Não altera nenhum valor — só o estilo. Best-effort: se falhar, a linha
+    fica sem formatação especial, mas o lançamento não é bloqueado.
+    """
+    try:
+        sheet_id = ws.id
+        origem      = {"sheetId": sheet_id, "startRowIndex": linha_origem_1based - 1,  "endRowIndex": linha_origem_1based,
+                        "startColumnIndex": 0, "endColumnIndex": n_cols}
+        destino     = {"sheetId": sheet_id, "startRowIndex": linha_destino_1based - 1, "endRowIndex": linha_destino_1based,
+                        "startColumnIndex": 0, "endColumnIndex": n_cols}
+        ws.spreadsheet.batch_update({
+            "requests": [{"copyPaste": {"source": origem, "destination": destino, "pasteType": "PASTE_FORMAT"}}]
+        })
+    except Exception:
+        pass  # Cosmético — a ausência de formatação não impede o lançamento
+
+
 def descritivo_parcela(indice: int, total: int) -> str:
     """
     Regra de descritivo das parcelas:
@@ -470,6 +502,10 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
     mapa_col = _mapear_colunas_planilha(valores[header_row])
     n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
 
+    # Referências de formatação: a última linha existente de cada tipo
+    ref_compra_0b    = _ultima_linha_do_tipo(valores, header_row, mapa_col, "Compra")
+    ref_pagamento_0b = _ultima_linha_do_tipo(valores, header_row, mapa_col, "Pagamento")
+
     linhas: list[list] = []
 
     # 1) Linha da Compra
@@ -491,13 +527,23 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
     # Uma única chamada de API grava todas as linhas contíguas ao final
     ws.append_rows(linhas, value_input_option="USER_ENTERED")
 
+    primeira_nova_1based = len(valores) + 1
+
     # Best-effort: herda a fórmula de "Dias vencimento" para cada nova linha
     if "dias_vencimento" in mapa_col and len(valores) > header_row + 1:
         col_1based = mapa_col["dias_vencimento"] + 1
         origem_1based = len(valores)            # última linha que já existia
-        primeira_nova_1based = len(valores) + 1
         for offset in range(len(linhas)):
             _copiar_formula_ajustada(ws, col_1based, origem_1based, primeira_nova_1based + offset)
+
+    # Best-effort: herda a formatação visual (moeda, data, cor, borda...) de
+    # uma linha existente do MESMO TIPO — Compra copia de Compra, cada
+    # Pagamento copia de Pagamento.
+    if ref_compra_0b is not None:
+        _copiar_formatacao_linha(ws, ref_compra_0b + 1, primeira_nova_1based, n_cols)
+    if ref_pagamento_0b is not None:
+        for offset in range(1, len(linhas)):  # offset 0 é a linha da Compra
+            _copiar_formatacao_linha(ws, ref_pagamento_0b + 1, primeira_nova_1based + offset, n_cols)
 
 
 # --------------------------------------------------------------------------- #
@@ -637,6 +683,11 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
     ref = g["parcelas"][-1] if g["parcelas"] else g["compra"]   # 0-based
     destino_1based = ref + 2                                    # linha logo abaixo
 
+    # Referência de FORMATAÇÃO: precisa ser uma linha 'Pagamento' de verdade
+    # (se este for a 1ª parcela do grupo, `ref` é a própria Compra — errado
+    # para copiar estilo). Sem parcela alguma no grupo, usa a última do sheet.
+    ref_formato_0b = g["parcelas"][-1] if g["parcelas"] else _ultima_linha_do_tipo(valores, header_row, mapa_col, "Pagamento")
+
     n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
     nova = [""] * n_cols
     _preencher_linha(nova, mapa_col, {**dados, "tipo": "Pagamento"})
@@ -644,6 +695,14 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
 
     if "dias_vencimento" in mapa_col:
         _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, ref + 1, destino_1based)
+
+    if ref_formato_0b is not None:
+        ref_formato_1based = ref_formato_0b + 1
+        # `insert_row` empurra para baixo (+1) qualquer linha que já estava
+        # NO ponto de inserção ou depois dele.
+        if ref_formato_1based >= destino_1based:
+            ref_formato_1based += 1
+        _copiar_formatacao_linha(ws, ref_formato_1based, destino_1based, n_cols)
 
     _renumerar_descritivos(ws, grupo_idx)
 
