@@ -1202,9 +1202,11 @@ def _status_badge(status: str, grupo: str) -> str:
 
 
 def _val_txt(v) -> str:
-    """Texto limpo para preencher inputs (NaN/None/nan → '')."""
+    """Texto limpo para preencher inputs (NaN/None → ''; float inteiro sem '.0')."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
     s = str(v).strip()
     return "" if s.lower() in ("nan", "none", "nat") else s
 
@@ -1457,10 +1459,24 @@ else:
         # --- Dados principais da Compra ---
         fornecedor  = _fmt(compra.get("fornecedor"))
         valor       = _fmt(compra.get("valor"), "valor")
-        req         = _fmt(compra.get("req_mxm"))
         descritivo  = _fmt(compra.get("descritivo"))
         termino     = _fmt(compra.get("termino_contrato"), "data")
         observacoes = _fmt(compra.get("observacoes"))
+
+        # Requisição: mostra o número (col C) ou um aviso quando ausente
+        req_val = _val_txt(compra.get("req_mxm"))
+        if req_val:
+            req_html = (
+                "<span style=\"color:#6B6552;font-size:0.74rem;margin-left:10px;"
+                f"letter-spacing:0.03em;\">Req. {html.escape(req_val)}</span>"
+            )
+        else:
+            req_html = (
+                "<span style=\"background:#E8920A1A;border:1px solid #E8920A99;"
+                "color:#B97200;font-size:0.6rem;font-weight:700;letter-spacing:0.04em;"
+                "text-transform:uppercase;padding:2px 8px;border-radius:999px;"
+                "margin-left:10px;\">⚠ sem requisição</span>"
+            )
 
         status_raw = str(compra.get("status", ""))
         status     = "Sem status" if status_raw in ("nan", "", "None") else status_raw
@@ -1491,7 +1507,7 @@ else:
                     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                         <div>
                             <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;font-weight:700;color:#262419;font-size:0.96rem;">{fornecedor}</span>
-                            <span style="color:#6B6552;font-size:0.74rem;margin-left:10px;letter-spacing:0.03em;">Req. {req}</span>
+                            {req_html}
                         </div>
                         <div style="display:flex;align-items:center;gap:12px;">
                             <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;color:#262419;font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>

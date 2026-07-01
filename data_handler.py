@@ -347,13 +347,15 @@ _MAPA_NOME_PARA_CAMPO = {
 
 # Índice de coluna (0-based) → campo lógico, para as colunas de cabeçalho
 # mesclado/vazio que a API não consegue identificar pelo nome do texto.
+# Estrutura real da planilha (verificada nos dados):
+#   C(2)=Req. MXM · D(3)=Valor · E(4)=Descritivo(nome) · G(6)=Dias vencimento
+#   H(7)=Link contrato(nome) · I(8)=Doc Fiscal · J(9)=Data pgto · K(10)=Status(nome)
 _MAPA_POSICIONAL_INDICE = {
-    3:  "valor",
-    4:  "req_mxm",
-    6:  "dias_vencimento",
-    7:  "termino_contrato",
-    9:  "data_pgto",
-    10: "doc_fiscal",
+    2: "req_mxm",
+    3: "valor",
+    6: "dias_vencimento",
+    8: "doc_fiscal",
+    9: "data_pgto",
 }
 
 
@@ -759,13 +761,15 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     # O Google Sheets retorna células mescladas do cabeçalho como "Unnamed: X".
     # Este mapa corrige pela posição exata detectada na planilha MAZ.
     # Se a ordem das colunas mudar, basta atualizar os índices abaixo.
+    # Estrutura real da planilha (verificada nos dados):
+    #   C(2)=Req. MXM · D(3)=Valor · E=Descritivo(nome) · G(6)=Dias vencimento
+    #   H=Link contrato(nome) · I(8)=Doc Fiscal · J(9)=Data pgto · K=Status(nome)
     mapa_posicional = {
+        "Unnamed: 2":  "req_mxm",          # col C — ID da requisição no ERP MXM
         "Unnamed: 3":  "valor",            # col D — valor financeiro do contrato/parcela
-        "Unnamed: 4":  "req_mxm",          # col E — ID da requisição no ERP MXM
         "Unnamed: 6":  "dias_vencimento",  # col G — contador de dias (negativo = vencido)
-        "Unnamed: 7":  "termino_contrato", # col H — data de vigência final do contrato
+        "Unnamed: 8":  "doc_fiscal",       # col I — número da NF/DANFE
         "Unnamed: 9":  "data_pgto",        # col J — data de pagamento ou previsão
-        "Unnamed: 10": "doc_fiscal",       # col K — número da NF/DANFE
     }
     df = df.rename(columns={k: v for k, v in mapa_posicional.items() if k in df.columns})
 
