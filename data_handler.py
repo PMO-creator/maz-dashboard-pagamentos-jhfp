@@ -12,8 +12,9 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
+import gspread
 import pandas as pd
 import streamlit as st
 
@@ -256,6 +257,10 @@ EMOJI_GRUPO = {
     "critico":      "🚨",
 }
 
+# Lista plana de todos os status válidos, na ordem em que aparecem nos grupos
+# (usada para popular os selectbox dos formulários de lançamento).
+STATUS_TODOS = [s for grupo in STATUS_GRUPOS.values() for s in grupo]
+
 
 def sheets_url_para_csv(url: str, nome_aba: str = "") -> str | None:
     """
@@ -297,6 +302,222 @@ def sheets_url_para_csv(url: str, nome_aba: str = "") -> str | None:
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
         f"/gviz/tq?tqx=out:csv"
     )
+
+
+def _extrair_sheet_id(url: str) -> str | None:
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+    return match.group(1) if match else None
+
+
+# --------------------------------------------------------------------------- #
+# ESCRITA AUTENTICADA — lançamentos feitos pelo dashboard gravam direto na    #
+# planilha via Service Account (Google Sheets API), em vez do link público   #
+# somente-leitura usado para exibição. Requer st.secrets["gcp_service_account"].
+#
+# Os dois dicionários abaixo espelham os mesmos usados em _normalizar_colunas
+# (leitura via CSV) — se a estrutura da planilha mudar, atualize os dois.
+# --------------------------------------------------------------------------- #
+
+_MAPA_NOME_PARA_CAMPO = {
+    "tipo":                "tipo",
+    "fornecedor":          "fornecedor",
+    "req. mxm":            "req_mxm",
+    "req mxm":             "req_mxm",
+    "requisição mxm":      "req_mxm",
+    "valor":               "valor",
+    "descritivo":          "descritivo",
+    "término contrato":    "termino_contrato",
+    "termino contrato":    "termino_contrato",
+    "término do contrato": "termino_contrato",
+    "dias vencimento":     "dias_vencimento",
+    "link contrato":       "link_contrato",
+    "link do contrato":    "link_contrato",
+    "doc fiscal":          "doc_fiscal",
+    "documento fiscal":    "doc_fiscal",
+    "data pgto":           "data_pgto",
+    "data de pagamento":   "data_pgto",
+    "data pagamento":      "data_pgto",
+    "status":              "status",
+    "situação":            "status",
+    "situacao":            "status",
+    "observações":         "observacoes",
+    "observacoes":         "observacoes",
+    "observação":          "observacoes",
+}
+
+# Índice de coluna (0-based) → campo lógico, para as colunas de cabeçalho
+# mesclado/vazio que a API não consegue identificar pelo nome do texto.
+_MAPA_POSICIONAL_INDICE = {
+    3:  "valor",
+    4:  "req_mxm",
+    6:  "dias_vencimento",
+    7:  "termino_contrato",
+    9:  "data_pgto",
+    10: "doc_fiscal",
+}
+
+
+def conectar_planilha_autenticada(sheets_url: str, nome_aba: str) -> gspread.Worksheet:
+    """
+    Abre a planilha via Service Account (leitura E escrita), diferente da
+    leitura pública (gviz/CSV) usada para exibir o dashboard.
+    Requer a chave da Service Account em st.secrets["gcp_service_account"].
+    """
+    if "gcp_service_account" not in st.secrets:
+        raise RuntimeError(
+            "Credenciais da Service Account não configuradas nos Secrets "
+            "(gcp_service_account). Lançamentos pelo dashboard exigem essa "
+            "configuração — veja o guia de configuração da Service Account."
+        )
+
+    sheet_id = _extrair_sheet_id(sheets_url)
+    if not sheet_id:
+        raise ValueError("URL do Google Sheets inválida.")
+
+    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    planilha = gc.open_by_key(sheet_id)
+    return planilha.worksheet(nome_aba) if nome_aba and nome_aba.strip() else planilha.sheet1
+
+
+def _detectar_header_gspread(valores: list[list[str]]) -> int:
+    """Mesma heurística da leitura via CSV: primeira linha que contém 'tipo'."""
+    for i, linha in enumerate(valores):
+        if "tipo" in [str(c).strip().lower() for c in linha]:
+            return i
+    return 0
+
+
+def _mapear_colunas_planilha(header: list[str]) -> dict[str, int]:
+    """Constrói {campo_lógico: índice_0based} a partir da linha de cabeçalho real."""
+    mapa: dict[str, int] = {}
+    for i, texto in enumerate(header):
+        chave = str(texto).strip().lower()
+        if chave in _MAPA_NOME_PARA_CAMPO:
+            mapa[_MAPA_NOME_PARA_CAMPO[chave]] = i
+    for indice, campo in _MAPA_POSICIONAL_INDICE.items():
+        if indice < len(header):
+            mapa[campo] = indice
+    return mapa
+
+
+def _formatar_valor_para_planilha(valor) -> str:
+    """Converte cada tipo de dado para o texto que a planilha deve interpretar
+    (USER_ENTERED faz a planilha reconhecer número/data como se fosse digitado)."""
+    if valor is None:
+        return ""
+    if isinstance(valor, (date, datetime)):
+        return valor.strftime("%d/%m/%Y")
+    if isinstance(valor, float):
+        return f"{valor:.2f}".replace(".", ",")
+    return str(valor).strip()
+
+
+def _preencher_linha(linha: list, mapa_col: dict[str, int], dados: dict) -> None:
+    """Preenche `linha` (lista já do tamanho certo) nos índices mapeados."""
+    for campo, valor in dados.items():
+        idx = mapa_col.get(campo)
+        if idx is not None and idx < len(linha):
+            linha[idx] = _formatar_valor_para_planilha(valor)
+
+
+def _copiar_formula_ajustada(ws: gspread.Worksheet, col_1based: int, linha_origem_1based: int, linha_destino_1based: int) -> None:
+    """
+    Copia a fórmula de uma célula vizinha (ex: 'Dias vencimento') para a nova
+    linha, ajustando referências que apontem para a própria linha de origem.
+    Falha silenciosamente se não houver fórmula — não é crítico ao lançamento.
+    """
+    try:
+        celula = ws.cell(linha_origem_1based, col_1based, value_render_option="FORMULA")
+        formula = celula.value
+        if not formula or not isinstance(formula, str) or not formula.startswith("="):
+            return
+        padrao = re.compile(rf"([A-Za-z]{{1,3}}){linha_origem_1based}\b")
+        nova_formula = padrao.sub(lambda m: f"{m.group(1)}{linha_destino_1based}", formula)
+        ws.update_cell(linha_destino_1based, col_1based, nova_formula)
+    except Exception:
+        pass  # Cosmético — a ausência da fórmula não impede o lançamento
+
+
+def inserir_compra(sheets_url: str, nome_aba: str, dados: dict) -> None:
+    """
+    Grava uma nova linha 'Compra' ao final da planilha.
+    `dados` deve conter os campos lógicos (fornecedor, req_mxm, valor, ...);
+    'tipo' é forçado para 'Compra' independente do que vier em `dados`.
+    """
+    ws = conectar_planilha_autenticada(sheets_url, nome_aba)
+    valores = ws.get_all_values()
+    header_row = _detectar_header_gspread(valores)
+    mapa_col = _mapear_colunas_planilha(valores[header_row])
+    n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
+
+    nova_linha = [""] * n_cols
+    _preencher_linha(nova_linha, mapa_col, {**dados, "tipo": "Compra"})
+    ws.append_row(nova_linha, value_input_option="USER_ENTERED")
+
+    # Tenta herdar a fórmula de "Dias vencimento" da última linha de dados
+    if "dias_vencimento" in mapa_col and len(valores) > header_row + 1:
+        linha_nova_1based = len(valores) + 1
+        _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, len(valores), linha_nova_1based)
+
+
+def inserir_pagamento(sheets_url: str, nome_aba: str, compra_chave: dict, dados: dict) -> None:
+    """
+    Grava uma nova linha 'Pagamento' imediatamente após o último pagamento
+    já existente da Compra indicada (ou logo abaixo da própria Compra, se for
+    o primeiro pagamento) — preserva o agrupamento por ordem sequencial.
+
+    `compra_chave`: {"fornecedor": ..., "req_mxm": ...} — identifica a Compra-alvo.
+    Lança ValueError se a Compra não for encontrada (ex: planilha mudou entre
+    o carregamento da tela e o envio do formulário).
+    """
+    ws = conectar_planilha_autenticada(sheets_url, nome_aba)
+    valores = ws.get_all_values()
+    header_row = _detectar_header_gspread(valores)
+    mapa_col = _mapear_colunas_planilha(valores[header_row])
+
+    idx_tipo = mapa_col.get("tipo")
+    idx_forn = mapa_col.get("fornecedor")
+    idx_req  = mapa_col.get("req_mxm")
+    if idx_tipo is None or idx_forn is None:
+        raise ValueError("Não foi possível identificar as colunas 'Tipo'/'Fornecedor' na planilha.")
+
+    def _campo(linha: list, idx: int | None) -> str:
+        if idx is None or idx >= len(linha):
+            return ""
+        return str(linha[idx]).strip()
+
+    linha_compra = None
+    for i in range(header_row + 1, len(valores)):
+        if _campo(valores[i], idx_tipo).title() == "Compra":
+            if _campo(valores[i], idx_forn) == str(compra_chave.get("fornecedor", "")).strip() and \
+               _campo(valores[i], idx_req) == str(compra_chave.get("req_mxm", "")).strip():
+                linha_compra = i
+                break
+
+    if linha_compra is None:
+        raise ValueError(
+            "A Compra selecionada não foi encontrada na planilha — "
+            "ela pode ter sido alterada. Atualize a página e tente novamente."
+        )
+
+    # Avança até o fim do grupo (última linha de Pagamento antes da próxima Compra)
+    linha_insercao = linha_compra + 1
+    for i in range(linha_compra + 1, len(valores)):
+        if _campo(valores[i], idx_tipo).title() == "Compra":
+            break
+        linha_insercao = i + 1
+
+    n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
+    nova_linha = [""] * n_cols
+    _preencher_linha(nova_linha, mapa_col, {**dados, "tipo": "Pagamento"})
+
+    linha_destino_1based = linha_insercao + 1
+    ws.insert_row(nova_linha, index=linha_destino_1based, value_input_option="USER_ENTERED")
+
+    # Tenta herdar a fórmula de "Dias vencimento" de uma linha vizinha do grupo
+    if "dias_vencimento" in mapa_col:
+        linha_referencia_1based = linha_insercao if linha_insercao > linha_compra + 1 else linha_compra + 1
+        _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, linha_referencia_1based, linha_destino_1based)
 
 
 # TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min

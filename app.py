@@ -740,6 +740,111 @@ _, df_pag_filtrado = dh.separar_por_tipo(df_filtrado)
 
 
 # --------------------------------------------------------------------------- #
+# LANÇAMENTOS — grava direto na planilha via Service Account (Owner/Admin)     #
+# Diferente da leitura (link público), a escrita exige credenciais próprias.  #
+# --------------------------------------------------------------------------- #
+
+if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+    secao_titulo("➕ Novo Lançamento")
+
+    if "gcp_service_account" not in st.secrets:
+        st.info(
+            "🔒 Os lançamentos pelo dashboard exigem a Service Account configurada "
+            "nos Secrets (`gcp_service_account`). Até isso ser configurado, "
+            "novos pedidos e pagamentos continuam sendo lançados direto na planilha.",
+            icon="ℹ️",
+        )
+    else:
+        tab_compra, tab_pagamento = st.tabs(["📄 Novo Pedido de Compra", "💰 Registrar Pagamento"])
+
+        # --- Formulário 1: Novo Pedido de Compra --------------------------- #
+        with tab_compra:
+            with st.form("form_nova_compra", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                with c1:
+                    nc_fornecedor = st.text_input("Fornecedor *")
+                    nc_req_mxm    = st.text_input("Req. MXM")
+                    nc_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f")
+                    nc_status     = st.selectbox("Status inicial *", options=dh.STATUS_TODOS)
+                with c2:
+                    nc_descritivo = st.text_input("Descritivo")
+                    nc_termino    = st.date_input("Término do contrato", value=None)
+                    nc_link       = st.text_input("Link do contrato")
+                nc_observacoes = st.text_area("Observações", height=80)
+
+                enviar_compra = st.form_submit_button("💾 Registrar Pedido de Compra", use_container_width=True)
+
+            if enviar_compra:
+                if not nc_fornecedor.strip() or nc_valor <= 0:
+                    st.error("Fornecedor e Valor total são obrigatórios.")
+                else:
+                    try:
+                        dh.inserir_compra(sheets_url_input, nome_aba_input, {
+                            "fornecedor":       nc_fornecedor,
+                            "req_mxm":          nc_req_mxm,
+                            "valor":            nc_valor,
+                            "descritivo":       nc_descritivo,
+                            "status":           nc_status,
+                            "termino_contrato": nc_termino,
+                            "link_contrato":    nc_link,
+                            "observacoes":      nc_observacoes,
+                        })
+                        dh.carregar_do_sheets.clear()
+                        st.success(f"Pedido de compra de **{nc_fornecedor}** registrado na planilha.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+
+        # --- Formulário 2: Registrar Pagamento ------------------------------ #
+        with tab_pagamento:
+            if df_compras.empty:
+                st.caption("Nenhum pedido de compra cadastrado ainda para vincular um pagamento.")
+            else:
+                opcoes_compra = {
+                    f"{row.get('fornecedor', '—')} · Req. {row.get('req_mxm', '—')} · {row.get('descritivo', '—')}": {
+                        "fornecedor": row.get("fornecedor", ""),
+                        "req_mxm":    row.get("req_mxm", ""),
+                    }
+                    for _, row in df_compras.iterrows()
+                }
+
+                with st.form("form_novo_pagamento", clear_on_submit=True):
+                    np_compra_label = st.selectbox("Pedido de Compra vinculado *", options=list(opcoes_compra.keys()))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        np_valor      = st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f")
+                        np_status     = st.selectbox("Status *", options=dh.STATUS_TODOS)
+                    with c2:
+                        np_doc_fiscal = st.text_input("Doc. Fiscal (nº da NF)")
+                        np_data_pgto  = st.date_input("Data de pagamento", value=None)
+                    np_observacoes = st.text_area("Observações", height=80)
+
+                    enviar_pagamento = st.form_submit_button("💾 Registrar Pagamento", use_container_width=True)
+
+                if enviar_pagamento:
+                    if np_valor <= 0:
+                        st.error("O valor da parcela é obrigatório.")
+                    else:
+                        try:
+                            dh.inserir_pagamento(
+                                sheets_url_input, nome_aba_input,
+                                opcoes_compra[np_compra_label],
+                                {
+                                    "valor":      np_valor,
+                                    "status":     np_status,
+                                    "doc_fiscal": np_doc_fiscal,
+                                    "data_pgto":  np_data_pgto,
+                                    "observacoes": np_observacoes,
+                                },
+                            )
+                            dh.carregar_do_sheets.clear()
+                            st.success("Pagamento registrado na planilha.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+
+
+# --------------------------------------------------------------------------- #
 # SEÇÃO 1 — KPI CARDS (visão macro para a diretoria)                           #
 # --------------------------------------------------------------------------- #
 
