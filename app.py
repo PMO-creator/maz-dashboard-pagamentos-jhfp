@@ -343,27 +343,17 @@ def estado_vazio(mensagem: str) -> None:
     )
 
 
-# Embute a imagem do divisor UMA ÚNICA VEZ via CSS global, em vez de repetir
-# a string base64 a cada chamada de secao_titulo() (eram 6 cópias na página).
-_cobra_divisor_uri = _logo_data_uri("cobra_divisor.png")
-if _cobra_divisor_uri:
-    st.markdown(
-        f"""
-        <style>
-        .section-title {{
-            border-bottom: none;
-            padding-bottom: 11px;
-            background: url({_cobra_divisor_uri}) left bottom / auto 7px repeat-x;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def secao_titulo(texto: str) -> None:
     """Renderiza um título de seção com sublinhado no grafismo de cobra da marca."""
-    st.markdown(f'<p class="section-title">{texto}</p>', unsafe_allow_html=True)
+    div = _logo_data_uri("cobra_divisor.png")
+    if div:
+        estilo = (
+            "border-bottom:none;padding-bottom:11px;"
+            f"background:url({div}) left bottom / auto 7px repeat-x;"
+        )
+    else:
+        estilo = ""
+    st.markdown(f'<p class="section-title" style="{estilo}">{texto}</p>', unsafe_allow_html=True)
 
 
 def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
