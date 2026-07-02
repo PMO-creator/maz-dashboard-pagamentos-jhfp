@@ -14,6 +14,7 @@
 import html
 import json
 import os
+import time
 from datetime import datetime, timedelta
 
 import streamlit as st
@@ -718,6 +719,19 @@ def _logo_data_uri(nome_arquivo: str) -> str:
         return ""
 
 
+@st.cache_data
+def _video_data_uri(nome_arquivo: str) -> str:
+    """Carrega um vídeo da pasta assets/ como data URI (cacheado). Retorna '' se ausente."""
+    import base64
+    caminho = os.path.join(os.path.dirname(__file__), "assets", nome_arquivo)
+    try:
+        with open(caminho, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return f"data:video/mp4;base64,{b64}"
+    except Exception:
+        return ""
+
+
 def cobra_lateral() -> None:
     """Renderiza a cobra decorativa fixa na lateral direita (cabeça no topo,
     corpo em ladrilho repetido) — usada apenas na tela de login."""
@@ -849,11 +863,34 @@ if not st.session_state["autenticado"]:
                 st.session_state["papel"]         = resultado["papel"]
                 st.session_state["nome_usuario"]  = resultado["nome"]
                 st.session_state["login_usuario"] = resultado["login"]
+                st.session_state["intro_pendente"] = True
                 st.rerun()
             else:
                 st.error("Login ou senha incorretos.")
 
     st.stop()
+
+# --------------------------------------------------------------------------- #
+# ANIMAÇÃO DE ABERTURA — toca uma vez, logo após o login ser confirmado        #
+# --------------------------------------------------------------------------- #
+if st.session_state.pop("intro_pendente", False):
+    _video_intro = _video_data_uri("intro_escuro.mp4" if TEMA_ATUAL == "escuro" else "intro_claro.mp4")
+    if _video_intro:
+        _intro_placeholder = st.empty()
+        _intro_placeholder.markdown(
+            f"""
+            <div style="position:fixed;inset:0;z-index:9999;background:{C['paper']};
+                        display:flex;align-items:center;justify-content:center;">
+                <video autoplay muted playsinline
+                       style="max-width:520px;width:60%;height:auto;">
+                    <source src="{_video_intro}" type="video/mp4">
+                </video>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        time.sleep(4.0)
+        _intro_placeholder.empty()
 
 _papel_usuario = st.session_state["papel"]
 _PAPEL_LABEL = {
