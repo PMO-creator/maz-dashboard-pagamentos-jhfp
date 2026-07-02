@@ -851,13 +851,15 @@ def _bloco_novo_lancamento():
             st.error("Informe ao menos uma parcela com valor.")
         else:
             try:
-                dh.inserir_compra_com_parcelas(sheets_url_input, nome_aba_input, c, parcelas)
+                avisos = dh.inserir_compra_com_parcelas(sheets_url_input, nome_aba_input, c, parcelas)
                 dh.carregar_do_sheets.clear()
                 _limpar_wizard_lancamento()
-                st.success(
-                    f"Pedido de **{c.get('fornecedor')}** e "
+                st.session_state["flash_ok"] = (
+                    f"Pedido de {c.get('fornecedor')} e "
                     f"{len(parcelas)} parcela(s) registrados na planilha."
                 )
+                if avisos:
+                    st.session_state["flash_avisos"] = avisos
                 st.rerun(scope="app")
             except Exception as e:
                 st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
@@ -1233,11 +1235,13 @@ _escrita_ok  = "gcp_service_account" in st.secrets
 # DIÁLOGOS DE EDIÇÃO (modal central, fundo escurecido — st.dialog nativo)      #
 # --------------------------------------------------------------------------- #
 
-def _fechar_dialog_e_atualizar(msg: str = "") -> None:
+def _fechar_dialog_e_atualizar(msg: str = "", avisos: list[str] | None = None) -> None:
     dh.carregar_do_sheets.clear()
     st.session_state.pop("edit_target", None)
     if msg:
         st.session_state["flash_ok"] = msg
+    if avisos:
+        st.session_state["flash_avisos"] = avisos
     st.rerun()
 
 
@@ -1347,11 +1351,11 @@ def _dialog_nova_parcela(gi: int) -> None:
                 st.error("O valor da parcela é obrigatório.")
             else:
                 try:
-                    dh.adicionar_parcela(sheets_url_input, nome_aba_input, gi, {
+                    avisos = dh.adicionar_parcela(sheets_url_input, nome_aba_input, gi, {
                         "valor": f_valor, "status": f_status,
                         "doc_fiscal": f_doc, "data_pgto": f_data,
                     })
-                    _fechar_dialog_e_atualizar("Parcela adicionada.")
+                    _fechar_dialog_e_atualizar("Parcela adicionada.", avisos)
                 except Exception as e:
                     st.error(f"Erro ao adicionar: `{e}`")
     with c_cancelar:
@@ -1363,6 +1367,13 @@ def _dialog_nova_parcela(gi: int) -> None:
 _flash = st.session_state.pop("flash_ok", None)
 if _flash:
     st.success(f"✅ {_flash}")
+
+# Avisos não-críticos (ex: falha ao copiar formatação visual) — não impedem
+# o lançamento, mas precisam aparecer pra gente conseguir diagnosticar.
+_flash_avisos = st.session_state.pop("flash_avisos", None)
+if _flash_avisos:
+    for _av in _flash_avisos:
+        st.warning(f"⚠️ {_av}")
 
 
 # ---- Busca: caixas separadas, uma por campo ----

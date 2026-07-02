@@ -452,12 +452,15 @@ def _ultima_linha_do_tipo(valores: list[list[str]], header_row: int, mapa_col: d
     return None
 
 
-def _copiar_formatacao_linha(ws: gspread.Worksheet, linha_origem_1based: int, linha_destino_1based: int, n_cols: int) -> None:
+def _copiar_formatacao_linha(ws: gspread.Worksheet, linha_origem_1based: int, linha_destino_1based: int, n_cols: int) -> str | None:
     """
     Copia a FORMATAÇÃO VISUAL (moeda, data, cor, borda, fonte...) de uma linha
     de referência para a nova linha, via Sheets API (copyPaste/PASTE_FORMAT).
-    Não altera nenhum valor — só o estilo. Best-effort: se falhar, a linha
-    fica sem formatação especial, mas o lançamento não é bloqueado.
+    Não altera nenhum valor — só o estilo.
+
+    Best-effort quanto ao LANÇAMENTO (nunca impede o registro do dado), mas
+    retorna a mensagem de erro (em vez de escondê-la) para que a interface
+    possa avisar o usuário quando a cópia de formatação falhar.
     """
     try:
         sheet_id = ws.id
@@ -468,8 +471,9 @@ def _copiar_formatacao_linha(ws: gspread.Worksheet, linha_origem_1based: int, li
         ws.spreadsheet.batch_update({
             "requests": [{"copyPaste": {"source": origem, "destination": destino, "pasteType": "PASTE_FORMAT"}}]
         })
-    except Exception:
-        pass  # Cosmético — a ausência de formatação não impede o lançamento
+        return None
+    except Exception as e:
+        return str(e)
 
 
 def descritivo_parcela(indice: int, total: int) -> str:
@@ -485,7 +489,7 @@ def descritivo_parcela(indice: int, total: int) -> str:
 
 
 def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
-                                dados_compra: dict, parcelas: list[dict]) -> None:
+                                dados_compra: dict, parcelas: list[dict]) -> list[str]:
     """
     Grava, em uma única operação, a linha 'Compra' seguida das suas linhas
     'Pagamento' (parcelas) — contíguas e nesta ordem, garantindo o
@@ -495,6 +499,10 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
     - parcelas: lista de dicts, cada um com valor/status/doc_fiscal/data_pgto.
       O 'descritivo' de cada parcela é definido automaticamente
       (ver descritivo_parcela); o 'tipo' é forçado em cada linha.
+
+    Retorna uma lista de avisos não-críticos (ex: falha ao copiar a
+    formatação visual) — o lançamento em si já foi gravado com sucesso
+    quando esta função retorna sem lançar exceção.
     """
     ws = conectar_planilha_autenticada(sheets_url, nome_aba)
     valores = ws.get_all_values()
@@ -538,12 +546,18 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
 
     # Best-effort: herda a formatação visual (moeda, data, cor, borda...) de
     # uma linha existente do MESMO TIPO — Compra copia de Compra, cada
-    # Pagamento copia de Pagamento.
+    # Pagamento copia de Pagamento. Erros viram avisos, não bloqueiam nada.
+    avisos: list[str] = []
     if ref_compra_0b is not None:
-        _copiar_formatacao_linha(ws, ref_compra_0b + 1, primeira_nova_1based, n_cols)
+        erro = _copiar_formatacao_linha(ws, ref_compra_0b + 1, primeira_nova_1based, n_cols)
+        if erro:
+            avisos.append(f"Formatação do pedido não copiada: {erro}")
     if ref_pagamento_0b is not None:
         for offset in range(1, len(linhas)):  # offset 0 é a linha da Compra
-            _copiar_formatacao_linha(ws, ref_pagamento_0b + 1, primeira_nova_1based + offset, n_cols)
+            erro = _copiar_formatacao_linha(ws, ref_pagamento_0b + 1, primeira_nova_1based + offset, n_cols)
+            if erro:
+                avisos.append(f"Formatação da parcela {offset} não copiada: {erro}")
+    return avisos
 
 
 # --------------------------------------------------------------------------- #
@@ -670,10 +684,11 @@ def excluir_pedido(sheets_url: str, nome_aba: str, grupo_idx: int) -> None:
     ws.delete_rows(inicio, fim)
 
 
-def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dict) -> None:
+def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dict) -> list[str]:
     """
     Insere uma nova parcela ao final do grupo (logo após a última parcela, ou
     logo abaixo da Compra se for a primeira) e renumera os descritivos.
+    Retorna avisos não-críticos (ex: falha ao copiar a formatação visual).
     """
     ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
     grupos = _localizar_grupos(valores, header_row, mapa_col)
@@ -696,15 +711,19 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
     if "dias_vencimento" in mapa_col:
         _copiar_formula_ajustada(ws, mapa_col["dias_vencimento"] + 1, ref + 1, destino_1based)
 
+    avisos: list[str] = []
     if ref_formato_0b is not None:
         ref_formato_1based = ref_formato_0b + 1
         # `insert_row` empurra para baixo (+1) qualquer linha que já estava
         # NO ponto de inserção ou depois dele.
         if ref_formato_1based >= destino_1based:
             ref_formato_1based += 1
-        _copiar_formatacao_linha(ws, ref_formato_1based, destino_1based, n_cols)
+        erro = _copiar_formatacao_linha(ws, ref_formato_1based, destino_1based, n_cols)
+        if erro:
+            avisos.append(f"Formatação da parcela não copiada: {erro}")
 
     _renumerar_descritivos(ws, grupo_idx)
+    return avisos
 
 
 # TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min
