@@ -435,9 +435,12 @@ input::placeholder, textarea::placeholder { color: var(--ink-soft) !important; o
 """, unsafe_allow_html=True)
 
 
-# No modo escuro, a faixa trançada adota o padrão vermelho/verde da cobra do
-# login (vermelho dominante = corpo; verde = escamas), no lugar do trançado
-# de 4 cores. Injetado só no escuro; no claro mantém o trançado original.
+# No modo escuro, a faixa trançada E os sublinhados dos títulos de seção
+# adotam o padrão vermelho/verde da cobra do login (vermelho dominante =
+# corpo; verde = escamas), no lugar do trançado de 4 cores / do sublinhado
+# verde-laranja. Injetado só no escuro; no claro mantém o original.
+# O !important no .section-title é necessário para vencer o estilo inline
+# (imagem cobra_divisor) aplicado por secao_titulo().
 if TEMA_ATUAL == "escuro":
     st.markdown("""
     <style>
@@ -445,6 +448,14 @@ if TEMA_ATUAL == "escuro":
         background: repeating-linear-gradient(45deg,
             #E02838 0 18px, #4F6A1E 18px 28px) !important;
         background-size: 28px 28px !important;
+    }
+    .section-title {
+        border-bottom: none !important;
+        background-image: repeating-linear-gradient(45deg,
+            #E02838 0 8px, #4F6A1E 8px 14px) !important;
+        background-size: 14px 6px !important;
+        background-position: left bottom !important;
+        background-repeat: repeat-x !important;
     }
     </style>
     """, unsafe_allow_html=True)
