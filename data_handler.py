@@ -27,9 +27,10 @@ import streamlit as st
 
 _USUARIOS_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_usuarios.json")
 
-PAPEL_OWNER  = "owner"
-PAPEL_ADMIN  = "admin"
-PAPEL_VIEWER = "viewer"
+PAPEL_OWNER        = "owner"
+PAPEL_ADMIN        = "admin"
+PAPEL_VIEWER       = "viewer"
+PAPEL_REQUISITANTE = "requisitante"
 
 
 def _hash_senha(senha: str) -> str:
@@ -414,10 +415,9 @@ _MAPA_POSICIONAL_INDICE = {
 }
 
 
-def conectar_planilha_autenticada(sheets_url: str, nome_aba: str) -> gspread.Worksheet:
+def _abrir_planilha(sheets_url: str) -> gspread.Spreadsheet:
     """
-    Abre a planilha via Service Account (leitura E escrita), diferente da
-    leitura pública (gviz/CSV) usada para exibir o dashboard.
+    Abre o arquivo da planilha (não uma aba específica) via Service Account.
     Requer a chave da Service Account em st.secrets["gcp_service_account"].
     """
     if "gcp_service_account" not in st.secrets:
@@ -432,8 +432,26 @@ def conectar_planilha_autenticada(sheets_url: str, nome_aba: str) -> gspread.Wor
         raise ValueError("URL do Google Sheets inválida.")
 
     gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
-    planilha = gc.open_by_key(sheet_id)
+    return gc.open_by_key(sheet_id)
+
+
+def conectar_planilha_autenticada(sheets_url: str, nome_aba: str) -> gspread.Worksheet:
+    """
+    Abre uma aba específica via Service Account (leitura E escrita), diferente
+    da leitura pública (gviz/CSV) usada para exibir o dashboard.
+    """
+    planilha = _abrir_planilha(sheets_url)
     return planilha.worksheet(nome_aba) if nome_aba and nome_aba.strip() else planilha.sheet1
+
+
+def _mapear_colunas_por_nome(header: list[str]) -> dict[str, int]:
+    """
+    Mapeamento simples nome→índice, usado nas abas que o PRÓPRIO dashboard
+    cria (ex: Aprovações) — ao contrário da planilha principal, aqui não há
+    células mescladas nem cabeçalhos ausentes, então dispensa o mapeamento
+    posicional usado em _mapear_colunas_planilha().
+    """
+    return {str(nome).strip(): i for i, nome in enumerate(header) if str(nome).strip()}
 
 
 def _detectar_header_gspread(valores: list[list[str]]) -> int:
@@ -779,6 +797,194 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
 
     _renumerar_descritivos(ws, grupo_idx)
     return avisos
+
+
+# --------------------------------------------------------------------------- #
+# FLUXO DE APROVAÇÃO — Requisitante solicita, Owner aprova/rejeita             #
+#                                                                              #
+# Os pedidos pendentes ficam numa aba própria ("Aprovações"), criada           #
+# automaticamente pelo dashboard na primeira vez que for necessária — com     #
+# cabeçalho limpo definido por nós mesmos (sem os problemas de células        #
+# mescladas da planilha principal). O histórico (aprovados/rejeitados) é      #
+# mantido na mesma aba, apenas com o status atualizado.                       #
+# --------------------------------------------------------------------------- #
+
+_ABA_APROVACOES = "Aprovações"
+
+_HEADER_APROVACOES = [
+    "tipo", "fornecedor", "req_mxm", "valor", "descritivo", "status",
+    "termino_contrato", "link_contrato", "doc_fiscal", "data_pgto", "observacoes",
+    "solicitante_login", "solicitante_nome", "status_aprovacao",
+    "data_solicitacao", "motivo_rejeicao",
+]
+
+STATUS_APROVACAO_PENDENTE  = "Pendente"
+STATUS_APROVACAO_APROVADO  = "Aprovado"
+STATUS_APROVACAO_REJEITADO = "Rejeitado"
+
+
+def _obter_aba_aprovacoes(sheets_url: str) -> gspread.Worksheet:
+    """Abre a aba de Aprovações; cria com o cabeçalho padrão na primeira vez."""
+    planilha = _abrir_planilha(sheets_url)
+    try:
+        return planilha.worksheet(_ABA_APROVACOES)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = planilha.add_worksheet(title=_ABA_APROVACOES, rows=200, cols=len(_HEADER_APROVACOES))
+        ws.append_row(_HEADER_APROVACOES, value_input_option="RAW")
+        return ws
+
+
+def _localizar_grupos_simples(valores: list[list[str]], idx_tipo: int) -> list[dict]:
+    """Mesma lógica de agrupamento sequencial (Compra→Pagamentos), mas para
+    uma aba com cabeçalho na linha 0 e sem quirks de posição."""
+    grupos: list[dict] = []
+    atual = None
+    for r in range(1, len(valores)):
+        linha = valores[r]
+        tipo = str(linha[idx_tipo]).strip().title() if idx_tipo < len(linha) else ""
+        if tipo == "Compra":
+            atual = {"compra": r, "parcelas": []}
+            grupos.append(atual)
+        elif tipo == "Pagamento" and atual is not None:
+            atual["parcelas"].append(r)
+    return grupos
+
+
+def criar_solicitacao(sheets_url: str, dados_compra: dict, parcelas: list[dict],
+                       solicitante_login: str, solicitante_nome: str) -> None:
+    """Grava um pedido (Compra + parcelas) na aba de Aprovações, status Pendente."""
+    ws = _obter_aba_aprovacoes(sheets_url)
+    header = ws.row_values(1)
+    mapa_col = _mapear_colunas_por_nome(header)
+    n_cols = len(header)
+
+    comuns = {
+        "solicitante_login": solicitante_login,
+        "solicitante_nome":  solicitante_nome,
+        "status_aprovacao":  STATUS_APROVACAO_PENDENTE,
+        "data_solicitacao":  datetime.now().strftime("%d/%m/%Y %H:%M"),
+    }
+
+    linhas: list[list] = []
+    linha_compra = [""] * n_cols
+    _preencher_linha(linha_compra, mapa_col, {**dados_compra, "tipo": "Compra", **comuns})
+    linhas.append(linha_compra)
+
+    total = len(parcelas)
+    for i, p in enumerate(parcelas):
+        linha_pag = [""] * n_cols
+        _preencher_linha(linha_pag, mapa_col, {
+            **p, "tipo": "Pagamento", "descritivo": descritivo_parcela(i, total), **comuns,
+        })
+        linhas.append(linha_pag)
+
+    ws.append_rows(linhas, value_input_option="USER_ENTERED")
+
+
+def listar_solicitacoes(sheets_url: str, apenas_login: str | None = None,
+                         apenas_status: str | None = None) -> list[dict]:
+    """
+    Lê a aba de Aprovações e agrupa em solicitações (Compra + parcelas).
+    Cada item: {"idx", "compra", "parcelas", "solicitante_login",
+    "solicitante_nome", "status_aprovacao", "data_solicitacao", "motivo_rejeicao"}.
+    `idx` identifica a posição do grupo — usado para aprovar/rejeitar depois.
+    Retorna mais recentes primeiro.
+    """
+    ws = _obter_aba_aprovacoes(sheets_url)
+    valores = ws.get_all_values()
+    if len(valores) < 2:
+        return []
+
+    header = valores[0]
+    mapa_col = _mapear_colunas_por_nome(header)
+    idx_tipo = mapa_col.get("tipo", 0)
+    grupos = _localizar_grupos_simples(valores, idx_tipo)
+
+    def _linha_para_dict(r: int) -> dict:
+        linha = valores[r]
+        return {campo: (linha[i] if i < len(linha) else "") for campo, i in mapa_col.items()}
+
+    resultado = []
+    for i, g in enumerate(grupos):
+        compra_dict = _linha_para_dict(g["compra"])
+        if apenas_login and compra_dict.get("solicitante_login", "").strip() != apenas_login.strip():
+            continue
+        if apenas_status and compra_dict.get("status_aprovacao", "") != apenas_status:
+            continue
+        resultado.append({
+            "idx":               i,
+            "compra":            compra_dict,
+            "parcelas":          [_linha_para_dict(r) for r in g["parcelas"]],
+            "solicitante_login": compra_dict.get("solicitante_login", ""),
+            "solicitante_nome":  compra_dict.get("solicitante_nome", ""),
+            "status_aprovacao":  compra_dict.get("status_aprovacao", ""),
+            "data_solicitacao":  compra_dict.get("data_solicitacao", ""),
+            "motivo_rejeicao":   compra_dict.get("motivo_rejeicao", ""),
+        })
+
+    resultado.reverse()
+    return resultado
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def contar_pendentes(sheets_url: str) -> int:
+    """Conta solicitações pendentes — cache curto pra não pesar a sidebar a cada clique."""
+    try:
+        return len(listar_solicitacoes(sheets_url, apenas_status=STATUS_APROVACAO_PENDENTE))
+    except Exception:
+        return 0
+
+
+def aprovar_solicitacao(sheets_url: str, nome_aba_destino: str, idx_grupo: int,
+                         dados_compra_final: dict, parcelas_final: list[dict]) -> list[str]:
+    """
+    Grava o pedido (com eventuais correções feitas pelo Owner) na planilha
+    real e marca a solicitação como Aprovada na aba de Aprovações (mantém
+    o histórico, só atualiza o status).
+    """
+    avisos = inserir_compra_com_parcelas(sheets_url, nome_aba_destino, dados_compra_final, parcelas_final)
+
+    ws = _obter_aba_aprovacoes(sheets_url)
+    valores = ws.get_all_values()
+    mapa_col = _mapear_colunas_por_nome(valores[0])
+    idx_tipo = mapa_col.get("tipo", 0)
+    grupos = _localizar_grupos_simples(valores, idx_tipo)
+    if idx_grupo >= len(grupos):
+        return avisos + ["Não foi possível marcar a solicitação como aprovada (posição não encontrada)."]
+
+    linhas_grupo = [grupos[idx_grupo]["compra"]] + grupos[idx_grupo]["parcelas"]
+    col_status = mapa_col.get("status_aprovacao")
+    if col_status is not None:
+        celulas = [gspread.Cell(r + 1, col_status + 1, STATUS_APROVACAO_APROVADO) for r in linhas_grupo]
+        ws.update_cells(celulas, value_input_option="RAW")
+
+    contar_pendentes.clear()
+    return avisos
+
+
+def rejeitar_solicitacao(sheets_url: str, idx_grupo: int, motivo: str) -> None:
+    """Marca a solicitação como Rejeitada, com o motivo (mantém o histórico)."""
+    ws = _obter_aba_aprovacoes(sheets_url)
+    valores = ws.get_all_values()
+    mapa_col = _mapear_colunas_por_nome(valores[0])
+    idx_tipo = mapa_col.get("tipo", 0)
+    grupos = _localizar_grupos_simples(valores, idx_tipo)
+    if idx_grupo >= len(grupos):
+        raise ValueError(_ERRO_GRUPO)
+
+    linhas_grupo = [grupos[idx_grupo]["compra"]] + grupos[idx_grupo]["parcelas"]
+    col_status = mapa_col.get("status_aprovacao")
+    col_motivo = mapa_col.get("motivo_rejeicao")
+    celulas = []
+    for r in linhas_grupo:
+        if col_status is not None:
+            celulas.append(gspread.Cell(r + 1, col_status + 1, STATUS_APROVACAO_REJEITADO))
+        if col_motivo is not None:
+            celulas.append(gspread.Cell(r + 1, col_motivo + 1, motivo))
+    if celulas:
+        ws.update_cells(celulas, value_input_option="RAW")
+
+    contar_pendentes.clear()
 
 
 # TTL de 5 minutos: o Streamlit recarrega os dados do Sheets a cada 5 min

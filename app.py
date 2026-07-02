@@ -297,6 +297,33 @@ def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
     return all(c in df.columns for c in colunas)
 
 
+def _val_num(v) -> float:
+    """
+    Converte para float, aceitando tanto números 'de verdade' (vindos do
+    dataframe principal, já tratados) quanto texto no formato brasileiro
+    (ex: "46900,00", vindo de leituras cruas de outras abas, como Aprovações).
+    """
+    try:
+        if pd.isna(v):
+            return 0.0
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        s = v.strip().replace("R$", "").strip()
+        if not s:
+            return 0.0
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
+
+
 def _fmt(v, tipo="texto"):
     """
     Formata valor para exibição em cards/tabelas.
@@ -306,13 +333,10 @@ def _fmt(v, tipo="texto"):
     if pd.isna(v) or str(v).strip() in ("", "nan", "None"):
         return "—"
     if tipo == "valor":
-        try:
-            return fmt_brl(float(v))
-        except Exception:
-            return html.escape(str(v))
+        return fmt_brl(_val_num(v))
     if tipo == "data":
         try:
-            return pd.to_datetime(v).strftime("%d/%m/%Y")
+            return pd.to_datetime(v, dayfirst=True).strftime("%d/%m/%Y")
         except Exception:
             return html.escape(str(v))
     return html.escape(str(v))
@@ -328,16 +352,11 @@ def _val_txt(v) -> str:
     return "" if s.lower() in ("nan", "none", "nat") else s
 
 
-def _val_num(v) -> float:
-    try:
-        return float(v) if pd.notna(v) else 0.0
-    except Exception:
-        return 0.0
-
-
 def _val_date(v):
     try:
-        return pd.to_datetime(v).date() if pd.notna(v) else None
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return pd.to_datetime(v, dayfirst=True).date() if pd.notna(v) else None
     except Exception:
         return None
 
@@ -480,9 +499,15 @@ if not st.session_state["autenticado"]:
 
 _papel_usuario = st.session_state["papel"]
 _PAPEL_LABEL = {
-    dh.PAPEL_OWNER:  "👑 Owner",
-    dh.PAPEL_ADMIN:  "🛠️ Admin",
-    dh.PAPEL_VIEWER: "👁️ Viewer",
+    dh.PAPEL_OWNER:        "👑 Owner",
+    dh.PAPEL_ADMIN:        "🛠️ Admin",
+    dh.PAPEL_VIEWER:       "👁️ Viewer",
+    dh.PAPEL_REQUISITANTE: "🙋 Requisitante",
+}
+_PAPEL_DESCRICAO = {
+    dh.PAPEL_ADMIN:        "🛠️ Admin (edita configurações e lança direto)",
+    dh.PAPEL_VIEWER:       "👁️ Viewer (somente visualização)",
+    dh.PAPEL_REQUISITANTE: "🙋 Requisitante (solicita pedidos p/ aprovação)",
 }
 
 
@@ -585,8 +610,8 @@ with st.sidebar:
                 nova_senha = st.text_input("Senha", type="password")
                 novo_papel = st.selectbox(
                     "Papel",
-                    options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER],
-                    format_func=lambda p: "🛠️ Admin (edita configurações)" if p == dh.PAPEL_ADMIN else "👁️ Viewer (somente visualização)",
+                    options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER, dh.PAPEL_REQUISITANTE],
+                    format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
                 )
                 cadastrar = st.form_submit_button("➕ Cadastrar", use_container_width=True)
 
@@ -775,6 +800,90 @@ if _colunas_faltando:
 
 
 # --------------------------------------------------------------------------- #
+# APROVAÇÕES — diálogo de revisão (Owner corrige antes de aprovar, ou rejeita) #
+# --------------------------------------------------------------------------- #
+
+@st.dialog("Revisar Solicitação")
+def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
+    c = solicitacao["compra"]
+    st.caption(
+        f"Solicitado por **{solicitacao['solicitante_nome']}** "
+        f"em {solicitacao['data_solicitacao']}"
+    )
+
+    _opts_status = dh.STATUS_TODOS
+    _idx_status = _opts_status.index(c.get("status")) if c.get("status") in _opts_status else 0
+
+    col1, col2 = st.columns(2)
+    with col1:
+        f_fornecedor = st.text_input("Fornecedor *", value=c.get("fornecedor", ""))
+        f_req        = st.text_input("Req. MXM", value=c.get("req_mxm", ""))
+        f_valor      = st.number_input("Valor total (R$) *", min_value=0.0, step=100.0, format="%.2f", value=_val_num(c.get("valor")))
+        f_status     = st.selectbox("Status inicial", options=_opts_status, index=_idx_status)
+    with col2:
+        f_descritivo = st.text_input("Descritivo", value=c.get("descritivo", ""))
+        f_termino    = st.date_input("Término do contrato", value=_val_date(c.get("termino_contrato")))
+        f_link       = st.text_input("Link do contrato", value=c.get("link_contrato", ""))
+    f_obs = st.text_area("Observações", value=c.get("observacoes", ""), height=70)
+
+    st.markdown("**Parcelas**")
+    parcelas_editadas = []
+    for i, p in enumerate(solicitacao["parcelas"]):
+        st.caption(p.get("descritivo") or f"Parcela {i + 1}")
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            pv = st.number_input(
+                "Valor da parcela (R$)", min_value=0.0, step=100.0, format="%.2f",
+                value=_val_num(p.get("valor")), key=f"rev_valor_{i}",
+            )
+            _opts_p = dh.STATUS_TODOS
+            _idx_p = _opts_p.index(p.get("status")) if p.get("status") in _opts_p else 0
+            ps = st.selectbox("Status", options=_opts_p, index=_idx_p, key=f"rev_status_{i}")
+        with pc2:
+            pdoc = st.text_input("Doc. Fiscal", value=p.get("doc_fiscal", ""), key=f"rev_doc_{i}")
+            pdt  = st.date_input("Data de pagamento", value=_val_date(p.get("data_pgto")), key=f"rev_data_{i}")
+        parcelas_editadas.append({"valor": pv, "status": ps, "doc_fiscal": pdoc, "data_pgto": pdt})
+
+    st.divider()
+    col_aprovar, col_cancelar = st.columns(2)
+    with col_aprovar:
+        if st.button("✅ Aprovar e lançar", use_container_width=True, type="primary"):
+            if not f_fornecedor.strip() or f_valor <= 0:
+                st.error("Fornecedor e Valor total são obrigatórios.")
+            else:
+                try:
+                    avisos = dh.aprovar_solicitacao(
+                        sheets_url_input, nome_aba_input, solicitacao["idx"],
+                        {
+                            "fornecedor": f_fornecedor, "req_mxm": f_req, "valor": f_valor,
+                            "descritivo": f_descritivo, "status": f_status,
+                            "termino_contrato": f_termino, "link_contrato": f_link,
+                            "observacoes": f_obs,
+                        },
+                        parcelas_editadas,
+                    )
+                    dh.carregar_do_sheets.clear()
+                    st.session_state["flash_ok"] = f"Pedido de {f_fornecedor} aprovado e lançado na planilha."
+                    if avisos:
+                        st.session_state["flash_avisos"] = avisos
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao aprovar: `{e}`")
+    with col_cancelar:
+        if st.button("Fechar", use_container_width=True):
+            st.rerun()
+
+    motivo = st.text_area("Motivo da rejeição (opcional)", key="rev_motivo", height=60)
+    if st.button("❌ Rejeitar solicitação", use_container_width=True):
+        try:
+            dh.rejeitar_solicitacao(sheets_url_input, solicitacao["idx"], motivo)
+            st.session_state["flash_ok"] = "Solicitação rejeitada."
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao rejeitar: `{e}`")
+
+
+# --------------------------------------------------------------------------- #
 # SIDEBAR — Filtros dinâmicos (renderizados após carga dos dados)               #
 # --------------------------------------------------------------------------- #
 
@@ -786,6 +895,47 @@ with st.sidebar:
         f"**{len(df)}** registros carregados · "
         f"**{df['fornecedor'].nunique() if 'fornecedor' in df.columns else 0}** fornecedores"
     )
+
+    # ------------------------------------------------------------------ #
+    # Aprovações Pendentes — visível apenas para o Owner (por enquanto)    #
+    # ------------------------------------------------------------------ #
+    if _papel_usuario == dh.PAPEL_OWNER and sheets_url_input and "gcp_service_account" in st.secrets:
+        try:
+            _n_pendentes = dh.contar_pendentes(sheets_url_input)
+        except Exception:
+            _n_pendentes = 0
+
+        st.markdown("---")
+        if _n_pendentes > 0:
+            st.markdown(
+                f'<span style="background:#E02838;color:#fff;border-radius:999px;'
+                f'padding:2px 10px;font-size:0.72rem;font-weight:700;">'
+                f'🔴 {_n_pendentes} pendente{"s" if _n_pendentes != 1 else ""}</span>',
+                unsafe_allow_html=True,
+            )
+        with st.expander("🔔 Aprovações Pendentes", expanded=False):
+            try:
+                _solicitacoes = dh.listar_solicitacoes(sheets_url_input, apenas_status=dh.STATUS_APROVACAO_PENDENTE)
+            except Exception as e:
+                _solicitacoes = []
+                st.error(f"Não foi possível carregar as solicitações: `{e}`")
+
+            if not _solicitacoes:
+                st.caption("Nenhuma solicitação pendente no momento.")
+            else:
+                for _s in _solicitacoes:
+                    _c = _s["compra"]
+                    col_info, col_ver = st.columns([3, 1])
+                    with col_info:
+                        st.markdown(
+                            f"**{_c.get('fornecedor', '—')}**  \n"
+                            f"<span style='color:#6B6552;font-size:0.72rem;'>"
+                            f"{_s['solicitante_nome']} · {_s['data_solicitacao']}</span>",
+                            unsafe_allow_html=True,
+                        )
+                    with col_ver:
+                        if st.button("👁️", key=f"revisar_{_s['idx']}", help="Revisar solicitação"):
+                            _dialog_revisar_solicitacao(_s)
 
 # Sem filtros de sidebar: os KPIs, gráficos e a exportação usam a base completa.
 df_filtrado = df
@@ -803,28 +953,13 @@ def _limpar_wizard_lancamento() -> None:
             del st.session_state[k]
 
 
-@st.fragment
-def _bloco_novo_lancamento():
+def _wizard_pedido(modo: str) -> None:
     """
-    Assistente de lançamento em 2 etapas (Pedido de Compra → Parcelas),
-    isolado com @st.fragment para que as interações (avançar, adicionar
-    parcela, digitar) recarreguem só este bloco — não o dashboard inteiro.
-    Grava a Compra e todas as suas parcelas numa única operação.
+    Assistente de 2 etapas (Pedido de Compra → Parcelas) reaproveitado por
+    dois fluxos, conforme `modo`:
+      - "lancar":    Owner/Admin grava direto na planilha (como já era)
+      - "solicitar": Requisitante envia para a fila de aprovação do Owner
     """
-    if _papel_usuario not in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
-        return
-
-    secao_titulo("➕ Novo Lançamento")
-
-    if "gcp_service_account" not in st.secrets:
-        st.info(
-            "🔒 Os lançamentos pelo dashboard exigem a Service Account configurada "
-            "nos Secrets (`gcp_service_account`). Até isso ser configurado, "
-            "novos pedidos e pagamentos continuam sendo lançados direto na planilha.",
-            icon="ℹ️",
-        )
-        return
-
     ss = st.session_state
     ss.setdefault("lanc_etapa", 1)
     ss.setdefault("lanc_compra", {})
@@ -894,13 +1029,15 @@ def _bloco_novo_lancamento():
             st.text_input("Doc. Fiscal (nº da NF)", key=f"np_doc_{i}")
             st.date_input("Data de pagamento", value=None, key=f"np_data_{i}")
 
+    label_botao = "💾 Registrar pagamento" if modo == "lancar" else "📨 Enviar para aprovação"
+
     col_add, col_reg = st.columns(2)
     with col_add:
         if st.button("➕ Adicionar parcela", use_container_width=True, key="lanc_add"):
             ss["lanc_n_parcelas"] += 1
             st.rerun(scope="fragment")
     with col_reg:
-        registrar = st.button("💾 Registrar pagamento", use_container_width=True, type="primary", key="lanc_reg")
+        registrar = st.button(label_botao, use_container_width=True, type="primary", key="lanc_reg")
 
     if registrar:
         # Coleta só as parcelas efetivamente preenchidas (valor > 0)
@@ -919,21 +1056,123 @@ def _bloco_novo_lancamento():
             st.error("Informe ao menos uma parcela com valor.")
         else:
             try:
-                avisos = dh.inserir_compra_com_parcelas(sheets_url_input, nome_aba_input, c, parcelas)
-                dh.carregar_do_sheets.clear()
+                if modo == "lancar":
+                    avisos = dh.inserir_compra_com_parcelas(sheets_url_input, nome_aba_input, c, parcelas)
+                    dh.carregar_do_sheets.clear()
+                    msg = f"Pedido de {c.get('fornecedor')} e {len(parcelas)} parcela(s) registrados na planilha."
+                else:
+                    dh.criar_solicitacao(
+                        sheets_url_input, c, parcelas,
+                        st.session_state["login_usuario"], st.session_state["nome_usuario"],
+                    )
+                    dh.contar_pendentes.clear()
+                    avisos = []
+                    msg = f"Solicitação de {c.get('fornecedor')} enviada para aprovação do Owner."
                 _limpar_wizard_lancamento()
-                st.session_state["flash_ok"] = (
-                    f"Pedido de {c.get('fornecedor')} e "
-                    f"{len(parcelas)} parcela(s) registrados na planilha."
-                )
+                st.session_state["flash_ok"] = msg
                 if avisos:
                     st.session_state["flash_avisos"] = avisos
                 st.rerun(scope="app")
             except Exception as e:
-                st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+                st.error(f"Não foi possível gravar.\n\nDetalhe técnico: `{e}`")
+
+
+@st.fragment
+def _bloco_novo_lancamento():
+    """Owner/Admin: lança direto na planilha (isolado com @st.fragment)."""
+    if _papel_usuario not in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+        return
+    secao_titulo("➕ Novo Lançamento")
+    if "gcp_service_account" not in st.secrets:
+        st.info(
+            "🔒 Os lançamentos pelo dashboard exigem a Service Account configurada "
+            "nos Secrets (`gcp_service_account`). Até isso ser configurado, "
+            "novos pedidos e pagamentos continuam sendo lançados direto na planilha.",
+            icon="ℹ️",
+        )
+        return
+    _wizard_pedido("lancar")
+
+
+@st.fragment
+def _bloco_solicitar_pedido():
+    """Requisitante: envia o pedido para a fila de aprovação do Owner."""
+    if _papel_usuario != dh.PAPEL_REQUISITANTE:
+        return
+    secao_titulo("🙋 Solicitar Pedido de Compra")
+    if "gcp_service_account" not in st.secrets:
+        st.info(
+            "🔒 O envio de solicitações exige a Service Account configurada "
+            "nos Secrets (`gcp_service_account`). Fale com o Owner do dashboard.",
+            icon="ℹ️",
+        )
+        return
+    st.caption("Preencha os dados abaixo. Seu pedido será enviado para aprovação antes de valer oficialmente.")
+    _wizard_pedido("solicitar")
+
+
+@st.fragment
+def _bloco_meus_pedidos():
+    """Requisitante: acompanha o status dos próprios pedidos enviados."""
+    if _papel_usuario != dh.PAPEL_REQUISITANTE:
+        return
+    if "gcp_service_account" not in st.secrets:
+        return
+
+    secao_titulo("🙋 Meus Pedidos")
+    login_atual = st.session_state.get("login_usuario", "")
+    try:
+        meus = dh.listar_solicitacoes(sheets_url_input, apenas_login=login_atual)
+    except Exception as e:
+        st.error(f"Não foi possível carregar seus pedidos: `{e}`")
+        return
+
+    if not meus:
+        st.caption("Você ainda não enviou nenhum pedido.")
+        return
+
+    _cor_aprov = {
+        dh.STATUS_APROVACAO_PENDENTE:  "#E8920A",
+        dh.STATUS_APROVACAO_APROVADO:  "#4F6A1E",
+        dh.STATUS_APROVACAO_REJEITADO: "#E02838",
+    }
+    _emoji_aprov = {
+        dh.STATUS_APROVACAO_PENDENTE:  "⏳",
+        dh.STATUS_APROVACAO_APROVADO:  "✅",
+        dh.STATUS_APROVACAO_REJEITADO: "❌",
+    }
+
+    for s in meus:
+        c = s["compra"]
+        st_aprov = s["status_aprovacao"] or dh.STATUS_APROVACAO_PENDENTE
+        cor = _cor_aprov.get(st_aprov, "#6B6552")
+        emoji = _emoji_aprov.get(st_aprov, "•")
+        motivo_html = (
+            f"<div style='color:#6B6552;font-size:0.76rem;margin-top:4px;'>Motivo: {html.escape(s['motivo_rejeicao'])}</div>"
+            if st_aprov == dh.STATUS_APROVACAO_REJEITADO and s.get("motivo_rejeicao") else ""
+        )
+        st.markdown(
+            f"""
+            <div style="background:#FCFAF4;border:1px solid #E3DAC7;border-left:4px solid {cor};
+                        border-radius:6px;padding:10px 16px;margin-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <span style="font-weight:700;color:#262419;font-size:0.9rem;">{html.escape(c.get('fornecedor', '—'))}</span>
+                        <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">{html.escape(_fmt(c.get('valor'), 'valor'))}</span>
+                    </div>
+                    <span style="color:{cor};font-weight:700;font-size:0.78rem;">{emoji} {html.escape(st_aprov)}</span>
+                </div>
+                <div style="color:#6B6552;font-size:0.74rem;margin-top:4px;">Enviado em {html.escape(s['data_solicitacao'])}</div>
+                {motivo_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 _bloco_novo_lancamento()
+_bloco_solicitar_pedido()
+_bloco_meus_pedidos()
 
 
 # --------------------------------------------------------------------------- #
