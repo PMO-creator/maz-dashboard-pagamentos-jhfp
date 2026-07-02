@@ -1471,6 +1471,45 @@ def _extrair_termino_vigencia(texto: str) -> "date | None":
     return max(candidatos) if candidatos else None
 
 
+# Status inicial sugerido para a parcela recém-importada: o pagamento ainda não
+# aconteceu e a NF costuma não ter sido emitida quando o pedido/contrato é lançado.
+_STATUS_PARCELA_PADRAO = "Aguardando emissão de NF/DANFE"
+
+
+def _extrair_parcelas(texto: str, valor_total: "float | None") -> list[dict]:
+    """
+    Reconhece as parcelas de pagamento descritas no documento. A grande maioria
+    dos pedidos/contratos do IDG é pagamento único (uma parcela = valor total);
+    só divide em várias quando o texto descreve parcelamento de forma explícita
+    ('em 3 parcelas de R$...', '1ª parcela ... R$...'). O detalhamento de custos
+    por item (ex: 'a) Projeto R$3.800 b) Visita R$6.480') NÃO conta como parcela,
+    pois nesses casos o pagamento é integral.
+    """
+    t = re.sub(r"\s+", " ", texto)
+    # 1) "em N (…) parcelas [iguais/mensais] de R$ X"
+    m = re.search(
+        r"\bem\s+(\d{1,2})\s*(?:\([^)]*\)\s*)?parcelas?\b[^.]{0,80}?de\s+R\$\s*([\d.,]+)",
+        t, re.IGNORECASE,
+    )
+    if m:
+        n = int(m.group(1))
+        v = _parse_valor_brl(m.group(2))
+        if 2 <= n <= 60 and v:
+            return [{"valor": v, "status": _STATUS_PARCELA_PADRAO} for _ in range(n)]
+    # 2) parcelas nomeadas: "1ª parcela ... R$ X", "2ª parcela ... R$ Y"
+    nomeadas = []
+    for mm in re.finditer(r"\b\d{1,2}[ªaºo]\s*parcela\b[^R]{0,50}R\$\s*([\d.,]+)", t, re.IGNORECASE):
+        v = _parse_valor_brl(mm.group(1))
+        if v:
+            nomeadas.append({"valor": v, "status": _STATUS_PARCELA_PADRAO})
+    if len(nomeadas) >= 2:
+        return nomeadas
+    # 3) padrão: pagamento único = valor total
+    if valor_total:
+        return [{"valor": float(valor_total), "status": _STATUS_PARCELA_PADRAO}]
+    return []
+
+
 def _extrair_pedido_compra(texto: str) -> dict:
     """Padrão 'ORDEM DE COMPRA' (PO) gerado pelo próprio sistema do IDG."""
     d: dict = {"_tipo": "pedido"}
@@ -1497,6 +1536,9 @@ def _extrair_pedido_compra(texto: str) -> dict:
     m = re.search(r"DATA DE ENTREGA:\s*\n\s*CONTRATANTE:\s*\n\s*(\d{2}/\d{2}/\d{4})", texto)
     if m:
         d["termino_contrato"] = _parse_data_qualquer(m.group(1))
+    parcelas = _extrair_parcelas(texto, d.get("valor"))
+    if parcelas:
+        d["parcelas"] = parcelas
     return d
 
 
@@ -1524,6 +1566,9 @@ def _extrair_contrato(texto: str) -> dict:
     )
     if m:
         d["descritivo"] = re.sub(r"\s+", " ", m.group(1)).strip().title()
+    parcelas = _extrair_parcelas(texto, d.get("valor"))
+    if parcelas:
+        d["parcelas"] = parcelas
     return d
 
 
@@ -1558,6 +1603,12 @@ def _mesclar_dados_extraidos(docs: list[dict]) -> dict:
             if valor:
                 resultado[campo] = valor
                 break
+    # Pagamento único: mantém a parcela alinhada ao valor total escolhido na
+    # mesclagem (que pode ter vindo de um documento diferente do da parcela).
+    _parcelas = resultado.get("parcelas")
+    if _parcelas and len(_parcelas) == 1 and resultado.get("valor"):
+        _parcelas = [{**_parcelas[0], "valor": float(resultado["valor"])}]
+        resultado["parcelas"] = _parcelas
     return resultado
 
 
@@ -1683,6 +1734,8 @@ def _wizard_pedido(modo: str) -> None:
                     for _i, _p in enumerate(_parcelas_ia):
                         if _p.get("valor"):
                             ss[f"np_valor_{_i}"] = float(_p["valor"])
+                        if _p.get("status") in dh.STATUS_TODOS:
+                            ss[f"np_status_{_i}"] = _p["status"]
                 ss["lanc_etapa"] = 2
                 st.rerun(scope="fragment")
         return
