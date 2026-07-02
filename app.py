@@ -297,6 +297,51 @@ def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
     return all(c in df.columns for c in colunas)
 
 
+def _fmt(v, tipo="texto"):
+    """
+    Formata valor para exibição em cards/tabelas.
+    Sempre escapa caracteres HTML especiais (<, >, &, ", ')
+    para evitar que conteúdo da planilha quebre o template HTML do card.
+    """
+    if pd.isna(v) or str(v).strip() in ("", "nan", "None"):
+        return "—"
+    if tipo == "valor":
+        try:
+            return fmt_brl(float(v))
+        except Exception:
+            return html.escape(str(v))
+    if tipo == "data":
+        try:
+            return pd.to_datetime(v).strftime("%d/%m/%Y")
+        except Exception:
+            return html.escape(str(v))
+    return html.escape(str(v))
+
+
+def _val_txt(v) -> str:
+    """Texto limpo para preencher inputs (NaN/None → ''; float inteiro sem '.0')."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    s = str(v).strip()
+    return "" if s.lower() in ("nan", "none", "nat") else s
+
+
+def _val_num(v) -> float:
+    try:
+        return float(v) if pd.notna(v) else 0.0
+    except Exception:
+        return 0.0
+
+
+def _val_date(v):
+    try:
+        return pd.to_datetime(v).date() if pd.notna(v) else None
+    except Exception:
+        return None
+
+
 @st.cache_data
 def _logo_data_uri(nome_arquivo: str) -> str:
     """Carrega uma logo da pasta assets/ como data URI (cacheado). Retorna '' se ausente."""
@@ -693,6 +738,29 @@ kpis = dh.calcular_kpis(df)
 # Indicador discreto de fonte e última atualização
 st.caption(fonte_dados)
 
+# --------------------------------------------------------------------------- #
+# ALERTA AUTOMÁTICO DE PRAZOS — aparece sozinho, sem precisar clicar em nada  #
+# --------------------------------------------------------------------------- #
+if "prazo_status" in df_compras.columns:
+    _n_vencidos = int((df_compras["prazo_status"] == dh.PRAZO_VENCIDO).sum())
+    _n_urgentes = int((df_compras["prazo_status"] == dh.PRAZO_URGENTE).sum())
+    if _n_vencidos or _n_urgentes:
+        _partes = []
+        if _n_vencidos:
+            _partes.append(f"🚨 <strong>{_n_vencidos}</strong> contrato{'s' if _n_vencidos != 1 else ''} vencido{'s' if _n_vencidos != 1 else ''}")
+        if _n_urgentes:
+            _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
+        st.markdown(
+            f"""
+            <div style="background:#E028380F;border:1px solid #E0283855;border-radius:6px;
+                        padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:#262419;">
+                {" &nbsp;·&nbsp; ".join(_partes)}
+                &nbsp;·&nbsp; <span style="color:#6B6552;">veja em 📅 Prazos de Contratos, abaixo</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 # Alerta de diagnóstico: exibe aviso se colunas essenciais não foram mapeadas.
 # Isso ajuda a identificar quando o nome da coluna na planilha é diferente do esperado.
 _colunas_essenciais = {"tipo", "fornecedor", "valor", "status"}
@@ -937,6 +1005,106 @@ st.markdown(f"""
 
 
 # --------------------------------------------------------------------------- #
+# SEÇÃO — PRAZOS DE CONTRATOS (visível para todos os papéis)                  #
+# --------------------------------------------------------------------------- #
+
+secao_titulo("📅 Prazos de Contratos")
+
+if "termino_contrato" not in df_compras.columns:
+    st.caption("Coluna de término do contrato não encontrada na planilha.")
+else:
+    _MESES_PT = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+        7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
+    }
+
+    def _rotulo_mes(periodo: str) -> str:
+        try:
+            ano, mes = periodo.split("-")
+            return f"{_MESES_PT[int(mes)]} {ano}"
+        except Exception:
+            return periodo
+
+    col_faixa, col_mes = st.columns(2)
+    with col_faixa:
+        opcoes_faixa = {
+            f"{dh.EMOJI_PRAZO[k]} {dh.LABEL_PRAZO[k]}": k
+            for k in [dh.PRAZO_VENCIDO, dh.PRAZO_URGENTE, dh.PRAZO_ATENCAO, dh.PRAZO_TRANQUILO, dh.PRAZO_SEM_DATA]
+        }
+        sel_faixa_label = st.multiselect(
+            "Faixa de urgência",
+            options=list(opcoes_faixa.keys()),
+            default=[],
+            placeholder="Todas as faixas",
+        )
+        sel_faixas = [opcoes_faixa[l] for l in sel_faixa_label]
+
+    with col_mes:
+        meses_disponiveis = sorted(
+            [m for m in df_compras["mes_vencimento"].dropna().unique().tolist() if m]
+        )
+        opcoes_mes = {_rotulo_mes(m): m for m in meses_disponiveis}
+        sel_mes_label = st.selectbox(
+            "Mês de vencimento",
+            options=["Todos os meses"] + list(opcoes_mes.keys()),
+        )
+        sel_mes = opcoes_mes.get(sel_mes_label)
+
+    df_prazos = df_compras.copy()
+    if sel_faixas:
+        df_prazos = df_prazos[df_prazos["prazo_status"].isin(sel_faixas)]
+    if sel_mes:
+        df_prazos = df_prazos[df_prazos["mes_vencimento"] == sel_mes]
+
+    # Ordena por urgência: vencidos primeiro, depois por proximidade da data
+    _ordem_urgencia = {dh.PRAZO_VENCIDO: 0, dh.PRAZO_URGENTE: 1, dh.PRAZO_ATENCAO: 2, dh.PRAZO_TRANQUILO: 3, dh.PRAZO_SEM_DATA: 4}
+    df_prazos = df_prazos.assign(_ordem=df_prazos["prazo_status"].map(_ordem_urgencia))
+    df_prazos = df_prazos.sort_values(["_ordem", "dias_para_vencer"], na_position="last")
+
+    st.caption(f"**{len(df_prazos)}** contrato(s) encontrados")
+
+    if df_prazos.empty:
+        estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
+    else:
+        for _, linha in df_prazos.iterrows():
+            _ps = str(linha.get("prazo_status", "sem_data"))
+            if _ps not in dh.CORES_PRAZO:
+                _ps = "sem_data"
+            _cor = dh.CORES_PRAZO[_ps]
+            _dias = linha.get("dias_para_vencer")
+            if pd.notna(_dias):
+                _dias = int(_dias)
+                _dias_txt = f"vence em {_dias} dia(s)" if _dias >= 0 else f"vencido há {abs(_dias)} dia(s)"
+            else:
+                _dias_txt = "sem data de término"
+
+            st.markdown(
+                f"""
+                <div style="display:flex;align-items:center;gap:12px;background:#FCFAF4;
+                            border:1px solid #E3DAC7;border-left:4px solid {_cor};
+                            border-radius:6px;padding:10px 16px;margin-bottom:6px;">
+                    <div style="flex:1;">
+                        <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;
+                                     font-weight:700;color:#262419;font-size:0.9rem;">
+                            {html.escape(_val_txt(linha.get('fornecedor')) or '—')}
+                        </span>
+                        <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">
+                            {html.escape(_val_txt(linha.get('descritivo')) or '—')}
+                        </span>
+                    </div>
+                    <div style="color:#6B6552;font-size:0.78rem;white-space:nowrap;">
+                        {_fmt(linha.get('termino_contrato'), 'data')}
+                    </div>
+                    <div style="color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
+                        {dh.EMOJI_PRAZO[_ps]} {html.escape(_dias_txt)}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+# --------------------------------------------------------------------------- #
 # SEÇÃO 2 — PANORAMA GERAL (2 gráficos lado a lado)                            #
 # --------------------------------------------------------------------------- #
 
@@ -1159,27 +1327,6 @@ else:
 secao_titulo("📋 Detalhamento de Contratos")
 
 
-def _fmt(v, tipo="texto"):
-    """
-    Formata valor para exibição na tabela hierárquica.
-    Sempre escapa caracteres HTML especiais (<, >, &, ", ')
-    para evitar que conteúdo da planilha quebre o template HTML do card.
-    """
-    if pd.isna(v) or str(v).strip() in ("", "nan", "None"):
-        return "—"
-    if tipo == "valor":
-        try:
-            return fmt_brl(float(v))
-        except Exception:
-            return html.escape(str(v))
-    if tipo == "data":
-        try:
-            return pd.to_datetime(v).strftime("%d/%m/%Y")
-        except Exception:
-            return html.escape(str(v))
-    return html.escape(str(v))
-
-
 # Cor do TEXTO do badge sobre fundo claro (laranja puro tem baixo contraste)
 _COR_TEXTO_BADGE = {
     "concluido":    "#4F6A1E",
@@ -1201,30 +1348,6 @@ def _status_badge(status: str, grupo: str) -> str:
         f'padding:3px 10px;border-radius:999px;white-space:nowrap;">'
         f'{status_safe}</span>'
     )
-
-
-def _val_txt(v) -> str:
-    """Texto limpo para preencher inputs (NaN/None → ''; float inteiro sem '.0')."""
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return ""
-    if isinstance(v, float) and v.is_integer():
-        return str(int(v))
-    s = str(v).strip()
-    return "" if s.lower() in ("nan", "none", "nat") else s
-
-
-def _val_num(v) -> float:
-    try:
-        return float(v) if pd.notna(v) else 0.0
-    except Exception:
-        return 0.0
-
-
-def _val_date(v):
-    try:
-        return pd.to_datetime(v).date() if pd.notna(v) else None
-    except Exception:
-        return None
 
 
 _pode_editar = _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN)
@@ -1499,14 +1622,43 @@ else:
         label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
 
         detalhes_parts = [descritivo] if descritivo != "—" else []
-        if termino != "—":
-            detalhes_parts.append(f"Término: {termino}")
         if observacoes != "—":
             detalhes_parts.append(observacoes)
         detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
 
         badge = _status_badge(status, grupo)
         cor_spine = dh.CORES_GRUPO.get(grupo, "#6B6552")
+
+        # --- Selo de prazo: código/link do contrato + término + urgência ---
+        prazo_status = str(compra.get("prazo_status", "sem_data"))
+        if prazo_status not in dh.CORES_PRAZO:
+            prazo_status = "sem_data"
+        cor_prazo   = dh.CORES_PRAZO[prazo_status]
+        emoji_prazo = dh.EMOJI_PRAZO[prazo_status]
+        label_prazo = dh.LABEL_PRAZO[prazo_status]
+
+        link_val = _val_txt(compra.get("link_contrato"))
+        partes_prazo = []
+        if link_val:
+            if link_val.lower().startswith("http"):
+                partes_prazo.append(
+                    f'<a href="{html.escape(link_val)}" target="_blank" '
+                    f'style="color:inherit;text-decoration:underline;">🔗 Contrato</a>'
+                )
+            else:
+                partes_prazo.append(f"📄 {html.escape(link_val)}")
+        if termino != "—":
+            partes_prazo.append(f"📅 Término: {termino}")
+        partes_prazo.append(f"{emoji_prazo} {label_prazo}")
+
+        prazo_chip_html = (
+            f'<span style="display:inline-flex;align-items:center;flex-wrap:wrap;'
+            f'gap:6px;background:{cor_prazo}14;border:1px solid {cor_prazo}66;'
+            f'color:{cor_prazo};font-size:0.7rem;font-weight:600;padding:4px 10px;'
+            f'border-radius:6px;margin-top:8px;">'
+            + " &nbsp;·&nbsp; ".join(partes_prazo) +
+            "</span>"
+        )
 
         card_html = f"""
             <div style="
@@ -1526,6 +1678,7 @@ else:
                         </div>
                     </div>
                     {f'<div style="color:#6B6552;font-size:0.78rem;margin-top:8px;">{detalhes_html}</div>' if detalhes_html else ""}
+                    <div>{prazo_chip_html}</div>
                 </div>
             </div>
         """

@@ -262,6 +262,59 @@ EMOJI_GRUPO = {
 STATUS_TODOS = [s for grupo in STATUS_GRUPOS.values() for s in grupo]
 
 
+# --------------------------------------------------------------------------- #
+# PRAZOS DE CONTRATO — classificação por urgência de vencimento               #
+# Baseada em 'termino_contrato' (data real, preenchida manualmente após       #
+# leitura do contrato) comparada com a data de hoje.                          #
+# Reaproveita a mesma paleta de 4 cores da marca usada em CORES_GRUPO.        #
+# --------------------------------------------------------------------------- #
+
+PRAZO_VENCIDO    = "vencido"
+PRAZO_URGENTE    = "urgente"     # vence em até 30 dias
+PRAZO_ATENCAO    = "atencao"     # vence em 31 a 90 dias
+PRAZO_TRANQUILO  = "tranquilo"   # vence em mais de 90 dias
+PRAZO_SEM_DATA   = "sem_data"    # término do contrato não preenchido ainda
+
+CORES_PRAZO = {
+    PRAZO_VENCIDO:   "#E02838",  # vermelho-urucum
+    PRAZO_URGENTE:   "#E8920A",  # laranja-sol
+    PRAZO_ATENCAO:   "#3E9489",  # verde-água
+    PRAZO_TRANQUILO: "#4F6A1E",  # verde-folha
+    PRAZO_SEM_DATA:  "#6B6552",  # neutro
+}
+
+EMOJI_PRAZO = {
+    PRAZO_VENCIDO:   "🚨",
+    PRAZO_URGENTE:   "⚠️",
+    PRAZO_ATENCAO:   "🔔",
+    PRAZO_TRANQUILO: "✅",
+    PRAZO_SEM_DATA:  "—",
+}
+
+LABEL_PRAZO = {
+    PRAZO_VENCIDO:   "Vencido",
+    PRAZO_URGENTE:   "Vence em até 30 dias",
+    PRAZO_ATENCAO:   "Vence em 31–90 dias",
+    PRAZO_TRANQUILO: "Sem urgência",
+    PRAZO_SEM_DATA:  "Sem data de término",
+}
+
+
+def classificar_prazo(termino_contrato, hoje: date | None = None) -> str:
+    """Classifica a urgência de vencimento a partir da data de término do contrato."""
+    if pd.isna(termino_contrato):
+        return PRAZO_SEM_DATA
+    hoje = hoje or date.today()
+    dias = (pd.Timestamp(termino_contrato).date() - hoje).days
+    if dias < 0:
+        return PRAZO_VENCIDO
+    if dias <= 30:
+        return PRAZO_URGENTE
+    if dias <= 90:
+        return PRAZO_ATENCAO
+    return PRAZO_TRANQUILO
+
+
 def sheets_url_para_csv(url: str, nome_aba: str = "") -> str | None:
     """
     Converte qualquer variante de URL do Google Sheets para URL de exportação CSV.
@@ -347,12 +400,14 @@ _MAPA_NOME_PARA_CAMPO = {
 
 # Índice de coluna (0-based) → campo lógico, para as colunas de cabeçalho
 # mesclado/vazio que a API não consegue identificar pelo nome do texto.
-# Estrutura real da planilha (verificada nos dados):
-#   C(2)=Req. MXM · D(3)=Valor · E(4)=Descritivo(nome) · G(6)=Dias vencimento
-#   H(7)=Link contrato(nome) · I(8)=Doc Fiscal · J(9)=Data pgto · K(10)=Status(nome)
+# Estrutura real da planilha (verificada nos dados + confirmado com o time):
+#   C(2)=Req. MXM · D(3)=Valor · E(4)=Descritivo(nome) · F(5)=Término contrato
+#   G(6)=Dias vencimento · H(7)=Link contrato(nome) · I(8)=Doc Fiscal
+#   J(9)=Data pgto · K(10)=Status(nome)
 _MAPA_POSICIONAL_INDICE = {
     2: "req_mxm",
     3: "valor",
+    5: "termino_contrato",
     6: "dias_vencimento",
     8: "doc_fiscal",
     9: "data_pgto",
@@ -843,11 +898,12 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
     #   C(2)=Req. MXM · D(3)=Valor · E=Descritivo(nome) · G(6)=Dias vencimento
     #   H=Link contrato(nome) · I(8)=Doc Fiscal · J(9)=Data pgto · K=Status(nome)
     mapa_posicional = {
-        "Unnamed: 2":  "req_mxm",          # col C — ID da requisição no ERP MXM
-        "Unnamed: 3":  "valor",            # col D — valor financeiro do contrato/parcela
-        "Unnamed: 6":  "dias_vencimento",  # col G — contador de dias (negativo = vencido)
-        "Unnamed: 8":  "doc_fiscal",       # col I — número da NF/DANFE
-        "Unnamed: 9":  "data_pgto",        # col J — data de pagamento ou previsão
+        "Unnamed: 2":  "req_mxm",           # col C — ID da requisição no ERP MXM
+        "Unnamed: 3":  "valor",             # col D — valor financeiro do contrato/parcela
+        "Unnamed: 5":  "termino_contrato",  # col F — data de término do contrato (manual)
+        "Unnamed: 6":  "dias_vencimento",   # col G — contador de dias (negativo = vencido)
+        "Unnamed: 8":  "doc_fiscal",        # col I — número da NF/DANFE
+        "Unnamed: 9":  "data_pgto",         # col J — data de pagamento ou previsão
     }
     df = df.rename(columns={k: v for k, v in mapa_posicional.items() if k in df.columns})
 
@@ -899,8 +955,11 @@ def _converter_tipos(df: pd.DataFrame) -> pd.DataFrame:
 def _enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     """
     Adiciona colunas derivadas que alimentam os KPIs e gráficos:
-    - 'grupo_status'  → categoria de saúde (concluido, alerta, etc.)
-    - 'mes_pgto'      → mês/ano de pagamento para série temporal
+    - 'grupo_status'    → categoria de saúde (concluido, alerta, etc.)
+    - 'mes_pgto'        → mês/ano de pagamento para série temporal
+    - 'prazo_status'    → urgência de vencimento do contrato
+    - 'dias_para_vencer'→ dias até o término (negativo = já vencido)
+    - 'mes_vencimento'  → mês/ano de término, para filtro por calendário
     """
     if "status" in df.columns:
         df["grupo_status"] = df["status"].map(
@@ -909,6 +968,15 @@ def _enriquecer(df: pd.DataFrame) -> pd.DataFrame:
 
     if "data_pgto" in df.columns:
         df["mes_pgto"] = df["data_pgto"].dt.to_period("M").astype(str)
+
+    if "termino_contrato" in df.columns:
+        hoje = date.today()
+        df["prazo_status"] = df["termino_contrato"].apply(lambda d: classificar_prazo(d, hoje))
+        df["dias_para_vencer"] = df["termino_contrato"].apply(
+            lambda d: (pd.Timestamp(d).date() - hoje).days if pd.notna(d) else None
+        )
+        df["mes_vencimento"] = df["termino_contrato"].dt.to_period("M").astype(str)
+        df.loc[df["termino_contrato"].isna(), "mes_vencimento"] = ""
 
     return df
 
