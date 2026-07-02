@@ -435,6 +435,21 @@ input::placeholder, textarea::placeholder { color: var(--ink-soft) !important; o
 """, unsafe_allow_html=True)
 
 
+# No modo escuro, a faixa trançada adota o padrão vermelho/verde da cobra do
+# login (vermelho dominante = corpo; verde = escamas), no lugar do trançado
+# de 4 cores. Injetado só no escuro; no claro mantém o trançado original.
+if TEMA_ATUAL == "escuro":
+    st.markdown("""
+    <style>
+    .maz-trancado {
+        background: repeating-linear-gradient(45deg,
+            #E02838 0 18px, #4F6A1E 18px 28px) !important;
+        background-size: 28px 28px !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 # --------------------------------------------------------------------------- #
 # HELPERS DE FORMATAÇÃO                                                         #
 # --------------------------------------------------------------------------- #
