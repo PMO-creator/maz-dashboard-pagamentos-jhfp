@@ -243,12 +243,28 @@ STATUS_PARA_GRUPO = {
 }
 
 # Cores por grupo (hex) — alinhadas à paleta do config.toml
-CORES_GRUPO = {
+# Mantida como CORES_GRUPO (tema claro) por compatibilidade com código já
+# existente; use cores_grupo(tema) nos pontos novos/atualizados para o
+# modo escuro responder corretamente.
+CORES_GRUPO_CLARO = {
     "concluido":    "#4F6A1E",   # Verde-folha (marca): pago / quitado — a floresta
     "em_andamento": "#3E9489",   # Verde-água (marca): em movimento — o rio que corre
     "alerta":       "#E8920A",   # Laranja-sol (marca): atenção
     "critico":      "#E02838",   # Vermelho-urucum (marca): urgência
 }
+CORES_GRUPO_ESCURO = {
+    "concluido":    "#7FB251",   # Verde-folha, aclarado para contraste no escuro
+    "em_andamento": "#5FC4B6",   # Verde-água, aclarado
+    "alerta":       "#F2AC4E",   # Laranja-sol, aclarado
+    "critico":      "#F16B74",   # Vermelho-urucum, aclarado
+}
+CORES_GRUPO = CORES_GRUPO_CLARO
+
+
+def cores_grupo(tema: str = "claro") -> dict:
+    """Retorna o dicionário de cores por grupo de status, conforme o tema ativo."""
+    return CORES_GRUPO_ESCURO if tema == "escuro" else CORES_GRUPO_CLARO
+
 
 # Emojis de suporte visual nos cards e tabelas
 EMOJI_GRUPO = {
@@ -276,13 +292,26 @@ PRAZO_ATENCAO    = "atencao"     # vence em 31 a 90 dias
 PRAZO_TRANQUILO  = "tranquilo"   # vence em mais de 90 dias
 PRAZO_SEM_DATA   = "sem_data"    # término do contrato não preenchido ainda
 
-CORES_PRAZO = {
+CORES_PRAZO_CLARO = {
     PRAZO_VENCIDO:   "#E02838",  # vermelho-urucum
     PRAZO_URGENTE:   "#E8920A",  # laranja-sol
     PRAZO_ATENCAO:   "#3E9489",  # verde-água
     PRAZO_TRANQUILO: "#4F6A1E",  # verde-folha
     PRAZO_SEM_DATA:  "#6B6552",  # neutro
 }
+CORES_PRAZO_ESCURO = {
+    PRAZO_VENCIDO:   "#F16B74",
+    PRAZO_URGENTE:   "#F2AC4E",
+    PRAZO_ATENCAO:   "#5FC4B6",
+    PRAZO_TRANQUILO: "#7FB251",
+    PRAZO_SEM_DATA:  "#9BAAA0",
+}
+CORES_PRAZO = CORES_PRAZO_CLARO
+
+
+def cores_prazo(tema: str = "claro") -> dict:
+    """Retorna o dicionário de cores por faixa de prazo, conforme o tema ativo."""
+    return CORES_PRAZO_ESCURO if tema == "escuro" else CORES_PRAZO_CLARO
 
 EMOJI_PRAZO = {
     PRAZO_VENCIDO:   "🚨",

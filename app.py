@@ -54,6 +54,38 @@ def _salvar_config_persistente(url: str, aba: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# PREFERÊNCIA DE TEMA (claro/escuro) — lembrada por login, salva em disco.     #
+# É só uma preferência cosmética: se o arquivo se perder num reboot, o pior   #
+# cenário é a pessoa ver o tema claro de novo e clicar no alternador — sem    #
+# risco de dado real, por isso não precisa do rigor da planilha (Sheets).     #
+# --------------------------------------------------------------------------- #
+_TEMA_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_tema.json")
+
+
+def _carregar_tema_salvo(login: str) -> str:
+    try:
+        with open(_TEMA_FILE, "r", encoding="utf-8") as f:
+            prefs = json.load(f)
+        return prefs.get(login, "claro")
+    except Exception:
+        return "claro"
+
+
+def _salvar_tema(login: str, tema: str) -> None:
+    try:
+        with open(_TEMA_FILE, "r", encoding="utf-8") as f:
+            prefs = json.load(f)
+    except Exception:
+        prefs = {}
+    prefs[login] = tema
+    try:
+        with open(_TEMA_FILE, "w", encoding="utf-8") as f:
+            json.dump(prefs, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
 # CONFIGURAÇÃO DA PÁGINA — deve ser a primeira chamada Streamlit               #
 # --------------------------------------------------------------------------- #
 _favicon_path = os.path.join(os.path.dirname(__file__), "assets", "logo_vertical.png")
@@ -66,25 +98,71 @@ st.set_page_config(
 
 
 # --------------------------------------------------------------------------- #
-# CSS GLOBAL — Identidade "Trançado das Amazônias"                              #
-# Paleta da marca MAZ sobre papel de galeria:                                   #
-#   #F6F1E7 papel | #4F6A1E folha | #E02838 urucum | #E8920A sol | #3E9489 rio #
+# TEMA — claro ("papel de galeria") e escuro ("noite sobre a floresta")        #
+# Mesma identidade e as mesmas 4 cores da marca nos dois; no escuro, os        #
+# acentos são levemente aclarados para manter contraste sobre fundo escuro.   #
 # --------------------------------------------------------------------------- #
-st.markdown("""
-<style>
-:root {
-    --paper:      #F6F1E7;
-    --paper-deep: #EFE8D8;
-    --surface:    #FCFAF4;
-    --ink:        #262419;
-    --ink-soft:   #6B6552;
-    --line:       #E3DAC7;
-    --folha:      #4F6A1E;
-    --urucum:     #E02838;
-    --sol:        #E8920A;
-    --rio:        #3E9489;
+TEMA_CLARO = {
+    "paper": "#F6F1E7", "paper_deep": "#EFE8D8", "surface": "#FCFAF4",
+    "ink": "#262419", "ink_soft": "#6B6552", "line": "#E3DAC7",
+    "folha": "#4F6A1E", "urucum": "#E02838", "sol": "#E8920A", "rio": "#3E9489",
+    "sol_texto": "#B97200", "rio_texto": "#2C6E64",
+    "shadow_soft": "#2624190F", "upload_border": "#4F6A1E55",
+    "bar_scale": ["#C9D6B0", "#7FA34A", "#4F6A1E"],
+}
+TEMA_ESCURO = {
+    "paper": "#0F1613", "paper_deep": "#182420", "surface": "#1E2B26",
+    "ink": "#EDEAE0", "ink_soft": "#9BAAA0", "line": "#2C3B34",
+    "folha": "#7FB251", "urucum": "#F16B74", "sol": "#F2AC4E", "rio": "#5FC4B6",
+    "sol_texto": "#F2AC4E", "rio_texto": "#5FC4B6",
+    "shadow_soft": "#FFFFFF14", "upload_border": "#7FB25166",
+    "bar_scale": ["#26362B", "#4F7A3E", "#7FB251"],
 }
 
+# Recarrega a preferência sempre que o login "mudar" (inclui o momento em que
+# deixa de ser None logo após autenticar) — não só na primeira execução —
+# senão a preferência salva nunca seria lida (o login ainda não existe na
+# primeira vez que este bloco roda, antes da tela de login).
+_TEMA_SENTINELA = "__nunca_carregado__"
+_login_para_tema = st.session_state.get("login_usuario")
+if st.session_state.get("_tema_carregado_para", _TEMA_SENTINELA) != _login_para_tema:
+    st.session_state["tema"] = _carregar_tema_salvo(_login_para_tema) if _login_para_tema else "claro"
+    st.session_state["_tema_carregado_para"] = _login_para_tema
+    # Se a mesma aba trocar de usuário sem fechar o navegador, o alternador
+    # (widget) não pode continuar preso na posição da pessoa anterior.
+    st.session_state.pop("toggle_tema", None)
+
+TEMA_ATUAL = st.session_state["tema"]
+C = TEMA_ESCURO if TEMA_ATUAL == "escuro" else TEMA_CLARO
+
+
+# --------------------------------------------------------------------------- #
+# CSS GLOBAL — Identidade "Trançado das Amazônias"                              #
+# Paleta da marca MAZ sobre papel de galeria (ou noite, no modo escuro)        #
+# --------------------------------------------------------------------------- #
+st.markdown(f"""
+<style>
+:root {{
+    --paper:          {C['paper']};
+    --paper-deep:     {C['paper_deep']};
+    --surface:        {C['surface']};
+    --ink:            {C['ink']};
+    --ink-soft:       {C['ink_soft']};
+    --line:           {C['line']};
+    --folha:          {C['folha']};
+    --urucum:         {C['urucum']};
+    --sol:            {C['sol']};
+    --rio:            {C['rio']};
+    --sol-texto:      {C['sol_texto']};
+    --rio-texto:      {C['rio_texto']};
+    --shadow-soft:    {C['shadow_soft']};
+    --upload-border:  {C['upload_border']};
+}}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
 /* --- Fonte global --- */
 html, body, [class*="css"] {
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -115,7 +193,7 @@ html, body, [class*="css"] {
     overflow: hidden;
     transition: box-shadow 0.2s, transform 0.2s;
 }
-.kpi-card:hover { box-shadow: 0 4px 18px #2624190F; transform: translateY(-1px); }
+.kpi-card:hover { box-shadow: 0 4px 18px var(--shadow-soft); transform: translateY(-1px); }
 .kpi-cap { height: 4px; }
 .kpi-cap.folha { background: var(--folha); }
 .kpi-cap.rio   { background: var(--rio); }
@@ -141,7 +219,7 @@ html, body, [class*="css"] {
 }
 .kpi-value.folha  { color: var(--folha); }
 .kpi-value.rio    { color: var(--rio); }
-.kpi-value.sol    { color: #B97200; }
+.kpi-value.sol    { color: var(--sol-texto); }
 .kpi-value.urucum { color: var(--urucum); }
 .kpi-sub {
     font-size: 0.72rem;
@@ -221,7 +299,7 @@ div[data-testid="stDataFrame"] {
 
 /* --- Upload box --- */
 [data-testid="stFileUploader"] {
-    border: 1px dashed #4F6A1E55;
+    border: 1px dashed var(--upload-border);
     border-radius: 6px;
     padding: 8px;
 }
@@ -398,7 +476,7 @@ def estado_vazio(mensagem: str) -> None:
     img = f'<img src="{cobra}" alt="" style="width:220px;max-width:60%;opacity:0.85;margin-bottom:14px;">' if cobra else ""
     st.markdown(
         f"""
-        <div style="text-align:center;padding:40px 20px;color:#6B6552;">
+        <div style="text-align:center;padding:40px 20px;color:{C['ink_soft']};">
             {img}
             <p style="font-size:0.9rem;margin:0;">{html.escape(mensagem)}</p>
         </div>
@@ -465,11 +543,11 @@ if not st.session_state["autenticado"]:
         <div class="maz-trancado maz-flow" style="max-width:420px;margin:48px auto 26px;"></div>
         <div style="max-width:420px;margin:0 auto 8px;text-align:center;">
             {_img_html}
-            <p class="maz-display" style="font-size:0.72rem;font-weight:700;color:#6B6552;
+            <p class="maz-display" style="font-size:0.72rem;font-weight:700;color:{C['ink_soft']};
                text-transform:uppercase;letter-spacing:0.2em;margin-top:14px;">
                 Dashboard Gerencial de Pagamentos
             </p>
-            <p style="font-size:0.8rem;color:#6B6552;margin-bottom:18px;">
+            <p style="font-size:0.8rem;color:{C['ink_soft']};margin-bottom:18px;">
                 IDG — Instituto de Desenvolvimento e Gestão
             </p>
         </div>
@@ -559,7 +637,7 @@ with st.sidebar:
     with col_user:
         st.markdown(
             f"**{st.session_state['nome_usuario']}**  \n"
-            f"<span style='color:#6B6552;font-size:0.75rem;'>{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</span>",
+            f"<span style='color:{C['ink_soft']};font-size:0.75rem;'>{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</span>",
             unsafe_allow_html=True,
         )
     with col_logout:
@@ -569,6 +647,22 @@ with st.sidebar:
             st.session_state["nome_usuario"]  = None
             st.session_state["login_usuario"] = None
             st.rerun()
+
+    # ------------------------------------------------------------------ #
+    # Alternador de tema — lembrado por pessoa (claro/escuro)              #
+    # ------------------------------------------------------------------ #
+    _tema_escuro_ativo = st.toggle(
+        "🌙 Modo escuro",
+        value=(TEMA_ATUAL == "escuro"),
+        key="toggle_tema",
+    )
+    _novo_tema = "escuro" if _tema_escuro_ativo else "claro"
+    if _novo_tema != TEMA_ATUAL:
+        st.session_state["tema"] = _novo_tema
+        _login_atual = st.session_state.get("login_usuario")
+        if _login_atual:
+            _salvar_tema(_login_atual, _novo_tema)
+        st.rerun()
 
     # ------------------------------------------------------------------ #
     # Configurações — visível para Owner e Admin                          #
@@ -638,7 +732,7 @@ with st.sidebar:
                         papel_u = dados_u.get("papel", dh.PAPEL_VIEWER)
                         st.markdown(
                             f"**{dados_u.get('nome', login_u)}**  \n"
-                            f"<span style='color:#6B6552;font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
+                            f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
                             unsafe_allow_html=True,
                         )
                     with col_del:
@@ -777,10 +871,10 @@ if "prazo_status" in df_compras.columns:
             _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
         st.markdown(
             f"""
-            <div style="background:#E028380F;border:1px solid #E0283855;border-radius:6px;
-                        padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:#262419;">
+            <div style="background:{C['urucum']}0F;border:1px solid {C['urucum']}55;border-radius:6px;
+                        padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:{C['ink']};">
                 {" &nbsp;·&nbsp; ".join(_partes)}
-                &nbsp;·&nbsp; <span style="color:#6B6552;">veja em 📅 Prazos de Contratos, abaixo</span>
+                &nbsp;·&nbsp; <span style="color:{C['ink_soft']};">veja em 📅 Prazos de Contratos, abaixo</span>
             </div>
             """,
             unsafe_allow_html=True,
@@ -908,7 +1002,7 @@ with st.sidebar:
         st.markdown("---")
         if _n_pendentes > 0:
             st.markdown(
-                f'<span style="background:#E02838;color:#fff;border-radius:999px;'
+                f'<span style="background:{C["urucum"]};color:#fff;border-radius:999px;'
                 f'padding:2px 10px;font-size:0.72rem;font-weight:700;">'
                 f'🔴 {_n_pendentes} pendente{"s" if _n_pendentes != 1 else ""}</span>',
                 unsafe_allow_html=True,
@@ -929,7 +1023,7 @@ with st.sidebar:
                     with col_info:
                         st.markdown(
                             f"**{_c.get('fornecedor', '—')}**  \n"
-                            f"<span style='color:#6B6552;font-size:0.72rem;'>"
+                            f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>"
                             f"{_s['solicitante_nome']} · {_s['data_solicitacao']}</span>",
                             unsafe_allow_html=True,
                         )
@@ -1009,7 +1103,7 @@ def _wizard_pedido(modo: str) -> None:
     c = ss["lanc_compra"]
     st.markdown(
         "**2. Condições de Pagamento** &nbsp;·&nbsp; "
-        f"<span style='color:#6B6552;'>{html.escape(str(c.get('fornecedor', '')))} · "
+        f"<span style='color:{C['ink_soft']};'>{html.escape(str(c.get('fornecedor', '')))} · "
         f"{fmt_brl(c.get('valor', 0))}</span>",
         unsafe_allow_html=True,
     )
@@ -1132,9 +1226,9 @@ def _bloco_meus_pedidos():
         return
 
     _cor_aprov = {
-        dh.STATUS_APROVACAO_PENDENTE:  "#E8920A",
-        dh.STATUS_APROVACAO_APROVADO:  "#4F6A1E",
-        dh.STATUS_APROVACAO_REJEITADO: "#E02838",
+        dh.STATUS_APROVACAO_PENDENTE:  C["sol"],
+        dh.STATUS_APROVACAO_APROVADO:  C["folha"],
+        dh.STATUS_APROVACAO_REJEITADO: C["urucum"],
     }
     _emoji_aprov = {
         dh.STATUS_APROVACAO_PENDENTE:  "⏳",
@@ -1145,24 +1239,24 @@ def _bloco_meus_pedidos():
     for s in meus:
         c = s["compra"]
         st_aprov = s["status_aprovacao"] or dh.STATUS_APROVACAO_PENDENTE
-        cor = _cor_aprov.get(st_aprov, "#6B6552")
+        cor = _cor_aprov.get(st_aprov, C["ink_soft"])
         emoji = _emoji_aprov.get(st_aprov, "•")
         motivo_html = (
-            f"<div style='color:#6B6552;font-size:0.76rem;margin-top:4px;'>Motivo: {html.escape(s['motivo_rejeicao'])}</div>"
+            f"<div style='color:{C['ink_soft']};font-size:0.76rem;margin-top:4px;'>Motivo: {html.escape(s['motivo_rejeicao'])}</div>"
             if st_aprov == dh.STATUS_APROVACAO_REJEITADO and s.get("motivo_rejeicao") else ""
         )
         st.markdown(
             f"""
-            <div style="background:#FCFAF4;border:1px solid #E3DAC7;border-left:4px solid {cor};
+            <div style="background:{C['surface']};border:1px solid {C['line']};border-left:4px solid {cor};
                         border-radius:6px;padding:10px 16px;margin-bottom:6px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                     <div>
-                        <span style="font-weight:700;color:#262419;font-size:0.9rem;">{html.escape(c.get('fornecedor', '—'))}</span>
-                        <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">{html.escape(_fmt(c.get('valor'), 'valor'))}</span>
+                        <span style="font-weight:700;color:{C['ink']};font-size:0.9rem;">{html.escape(c.get('fornecedor', '—'))}</span>
+                        <span style="color:{C['ink_soft']};font-size:0.76rem;margin-left:8px;">{html.escape(_fmt(c.get('valor'), 'valor'))}</span>
                     </div>
                     <span style="color:{cor};font-weight:700;font-size:0.78rem;">{emoji} {html.escape(st_aprov)}</span>
                 </div>
-                <div style="color:#6B6552;font-size:0.74rem;margin-top:4px;">Enviado em {html.escape(s['data_solicitacao'])}</div>
+                <div style="color:{C['ink_soft']};font-size:0.74rem;margin-top:4px;">Enviado em {html.escape(s['data_solicitacao'])}</div>
                 {motivo_html}
             </div>
             """,
@@ -1234,7 +1328,7 @@ with col6:
 # Barra de progresso da execução orçamentária
 pct = min(kpis["perc_execucao"], 100)
 st.markdown(f"""
-<div class="maz-display" style="margin: 12px 0 4px 0; font-size:0.7rem; color:#6B6552; letter-spacing:0.1em; text-transform:uppercase;">
+<div class="maz-display" style="margin: 12px 0 4px 0; font-size:0.7rem; color:{C['ink_soft']}; letter-spacing:0.1em; text-transform:uppercase;">
     Execução Orçamentária Global — {pct:.1f}% concluído
 </div>
 <div class="progress-bar-container">
@@ -1306,11 +1400,12 @@ else:
         if df_prazos.empty:
             estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
         else:
+            _cores_prazo_ativo = dh.cores_prazo(TEMA_ATUAL)
             for _, linha in df_prazos.iterrows():
                 _ps = str(linha.get("prazo_status", "sem_data"))
-                if _ps not in dh.CORES_PRAZO:
+                if _ps not in _cores_prazo_ativo:
                     _ps = "sem_data"
-                _cor = dh.CORES_PRAZO[_ps]
+                _cor = _cores_prazo_ativo[_ps]
                 _dias = linha.get("dias_para_vencer")
                 if pd.notna(_dias):
                     _dias = int(_dias)
@@ -1320,19 +1415,19 @@ else:
 
                 st.markdown(
                     f"""
-                    <div style="display:flex;align-items:center;gap:12px;background:#FCFAF4;
-                                border:1px solid #E3DAC7;border-left:4px solid {_cor};
+                    <div style="display:flex;align-items:center;gap:12px;background:{C['surface']};
+                                border:1px solid {C['line']};border-left:4px solid {_cor};
                                 border-radius:6px;padding:10px 16px;margin-bottom:6px;">
                         <div style="flex:1;">
                             <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;
-                                         font-weight:700;color:#262419;font-size:0.9rem;">
+                                         font-weight:700;color:{C['ink']};font-size:0.9rem;">
                                 {html.escape(_val_txt(linha.get('fornecedor')) or '—')}
                             </span>
-                            <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">
+                            <span style="color:{C['ink_soft']};font-size:0.76rem;margin-left:8px;">
                                 {html.escape(_val_txt(linha.get('descritivo')) or '—')}
                             </span>
                         </div>
-                        <div style="color:#6B6552;font-size:0.78rem;white-space:nowrap;">
+                        <div style="color:{C['ink_soft']};font-size:0.78rem;white-space:nowrap;">
                             {_fmt(linha.get('termino_contrato'), 'data')}
                         </div>
                         <div style="color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
@@ -1362,7 +1457,7 @@ with col_esq:
             lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
         )
         # Cor baseada no grupo de saúde
-        cores_mapa = contagem_status["Grupo"].map(dh.CORES_GRUPO).tolist()
+        cores_mapa = contagem_status["Grupo"].map(dh.cores_grupo(TEMA_ATUAL)).tolist()
 
         fig_donut = px.pie(
             contagem_status,
@@ -1380,14 +1475,14 @@ with col_esq:
         fig_donut.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#262419",
+            font_color=C['ink'],
             showlegend=False,
             title_font_size=13,
-            title_font_color="#6B6552",
+            title_font_color=C['ink_soft'],
             margin=dict(t=40, b=10, l=10, r=10),
             annotations=[dict(
                 text=f"<b>{fmt_brl(kpis['a_pagar'])}</b><br><span style='font-size:10px'>a pagar</span>",
-                x=0.5, y=0.5, font_size=12, showarrow=False, font_color="#4F6A1E"
+                x=0.5, y=0.5, font_size=12, showarrow=False, font_color=C['folha']
             )],
         )
         st.plotly_chart(fig_donut, use_container_width=True)
@@ -1411,7 +1506,7 @@ with col_dir:
             orientation="h",
             title="Top 10 Fornecedores · Valor Contratado",
             color="Valor",
-            color_continuous_scale=[[0, "#C9D6B0"], [0.5, "#7FA34A"], [1, "#4F6A1E"]],
+            color_continuous_scale=[[0, C['bar_scale'][0]], [0.5, C['bar_scale'][1]], [1, C['bar_scale'][2]]],
             text="Valor",
         )
         fig_bar.update_traces(
@@ -1422,9 +1517,9 @@ with col_dir:
         fig_bar.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#262419",
+            font_color=C['ink'],
             title_font_size=13,
-            title_font_color="#6B6552",
+            title_font_color=C['ink_soft'],
             coloraxis_showscale=False,
             xaxis=dict(showgrid=False, visible=False),
             yaxis=dict(showgrid=False),
@@ -1470,7 +1565,7 @@ else:
             y="Valor",
             title="Valor Parado por Fase de Gargalo",
             color="Grupo",
-            color_discrete_map=dh.CORES_GRUPO,
+            color_discrete_map=dh.cores_grupo(TEMA_ATUAL),
             text="Valor",
         )
         fig_gargalo.update_traces(
@@ -1481,12 +1576,12 @@ else:
         fig_gargalo.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#262419",
+            font_color=C['ink'],
             title_font_size=13,
-            title_font_color="#6B6552",
+            title_font_color=C['ink_soft'],
             showlegend=False,
             xaxis=dict(showgrid=False, tickangle=-20),
-            yaxis=dict(showgrid=True, gridcolor="#E3DAC7", visible=False),
+            yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
             margin=dict(t=50, b=60, l=10, r=10),
         )
         st.plotly_chart(fig_gargalo, use_container_width=True)
@@ -1534,7 +1629,7 @@ if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
             color="Situação",
             barmode="group",
             title="Pagamentos Realizados vs. Previstos por Mês",
-            color_discrete_map={"Realizado": "#4F6A1E", "Previsto": "#E8920A"},
+            color_discrete_map={"Realizado": C['folha'], "Previsto": C['sol']},
             text="Valor",
         )
         fig_tempo.update_traces(
@@ -1545,11 +1640,11 @@ if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
         fig_tempo.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#262419",
+            font_color=C['ink'],
             title_font_size=13,
-            title_font_color="#6B6552",
+            title_font_color=C['ink_soft'],
             xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#E3DAC7", visible=False),
+            yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             margin=dict(t=60, b=40, l=10, r=10),
         )
@@ -1567,19 +1662,19 @@ else:
 secao_titulo("📋 Detalhamento de Contratos")
 
 
-# Cor do TEXTO do badge sobre fundo claro (laranja puro tem baixo contraste)
+# Cor do TEXTO do badge (versão com bom contraste sobre o fundo do card)
 _COR_TEXTO_BADGE = {
-    "concluido":    "#4F6A1E",
-    "em_andamento": "#2C6E64",
-    "alerta":       "#B97200",
-    "critico":      "#E02838",
+    "concluido":    C["folha"],
+    "em_andamento": C["rio_texto"],
+    "alerta":       C["sol_texto"],
+    "critico":      C["urucum"],
 }
 
 
 def _status_badge(status: str, grupo: str) -> str:
-    """Retorna HTML do badge de status colorido (tema claro)."""
-    cor = dh.CORES_GRUPO.get(grupo, "#6B6552")
-    cor_txt = _COR_TEXTO_BADGE.get(grupo, "#6B6552")
+    """Retorna HTML do badge de status colorido, conforme o tema ativo."""
+    cor = dh.cores_grupo(TEMA_ATUAL).get(grupo, C["ink_soft"])
+    cor_txt = _COR_TEXTO_BADGE.get(grupo, C["ink_soft"])
     # status pode conter caracteres especiais vindos da planilha — escapar sempre
     status_safe = html.escape(str(status))
     return (
@@ -1742,7 +1837,7 @@ if _flash_avisos:
 # ---- Busca: caixas separadas, uma por campo ----
 st.markdown(
     "<span class='maz-display' style='font-size:0.72rem;font-weight:700;"
-    "letter-spacing:0.14em;text-transform:uppercase;color:#6B6552;'>Buscar por</span>",
+    "letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
     unsafe_allow_html=True,
 )
 bc1, bc2, bc3, bc4 = st.columns(4)
@@ -1841,13 +1936,13 @@ else:
         req_val = _val_txt(compra.get("req_mxm"))
         if req_val:
             req_html = (
-                "<span style=\"color:#6B6552;font-size:0.74rem;margin-left:10px;"
+                f"<span style=\"color:{C['ink_soft']};font-size:0.74rem;margin-left:10px;"
                 f"letter-spacing:0.03em;\">Req. {html.escape(req_val)}</span>"
             )
         else:
             req_html = (
-                "<span style=\"background:#E8920A1A;border:1px solid #E8920A99;"
-                "color:#B97200;font-size:0.6rem;font-weight:700;letter-spacing:0.04em;"
+                f"<span style=\"background:{C['sol']}1A;border:1px solid {C['sol']}99;"
+                f"color:{C['sol_texto']};font-size:0.6rem;font-weight:700;letter-spacing:0.04em;"
                 "text-transform:uppercase;padding:2px 8px;border-radius:999px;"
                 "margin-left:10px;\">⚠ sem requisição</span>"
             )
@@ -1867,13 +1962,14 @@ else:
         detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
 
         badge = _status_badge(status, grupo)
-        cor_spine = dh.CORES_GRUPO.get(grupo, "#6B6552")
+        cor_spine = dh.cores_grupo(TEMA_ATUAL).get(grupo, C["ink_soft"])
 
         # --- Selo de prazo: código/link do contrato + término + urgência ---
         prazo_status = str(compra.get("prazo_status", "sem_data"))
-        if prazo_status not in dh.CORES_PRAZO:
+        _cores_prazo_ativo2 = dh.cores_prazo(TEMA_ATUAL)
+        if prazo_status not in _cores_prazo_ativo2:
             prazo_status = "sem_data"
-        cor_prazo   = dh.CORES_PRAZO[prazo_status]
+        cor_prazo   = _cores_prazo_ativo2[prazo_status]
         emoji_prazo = dh.EMOJI_PRAZO[prazo_status]
         label_prazo = dh.LABEL_PRAZO[prazo_status]
 
@@ -1902,22 +1998,22 @@ else:
 
         card_html = f"""
             <div style="
-                background:#FCFAF4;border:1px solid #E3DAC7;border-radius:6px;
+                background:{C['surface']};border:1px solid {C['line']};border-radius:6px;
                 margin-bottom:6px;font-family:sans-serif;display:flex;overflow:hidden;
             ">
                 <div style="width:5px;flex-shrink:0;background:{cor_spine};"></div>
                 <div style="flex:1;padding:14px 18px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                         <div>
-                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;font-weight:700;color:#262419;font-size:0.96rem;">{fornecedor}</span>
+                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;font-weight:700;color:{C['ink']};font-size:0.96rem;">{fornecedor}</span>
                             {req_html}
                         </div>
                         <div style="display:flex;align-items:center;gap:12px;">
-                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;color:#262419;font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>
+                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;color:{C['ink']};font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>
                             {badge}
                         </div>
                     </div>
-                    {f'<div style="color:#6B6552;font-size:0.78rem;margin-top:8px;">{detalhes_html}</div>' if detalhes_html else ""}
+                    {f'<div style="color:{C["ink_soft"]};font-size:0.78rem;margin-top:8px;">{detalhes_html}</div>' if detalhes_html else ""}
                     <div>{prazo_chip_html}</div>
                 </div>
             </div>
@@ -1942,15 +2038,15 @@ else:
                     p_desc  = _val_txt(prow.get("descritivo")) or "—"
                     p_stat  = _val_txt(prow.get("status")) or "Sem status"
                     cols = st.columns([3, 2, 2, 2, 1]) if (_pode_editar and _escrita_ok) else st.columns([3, 2, 2, 3])
-                    cols[0].markdown(f"**{p_desc}**  \n{dh.EMOJI_GRUPO.get(p_grupo, '')} <span style='font-size:0.75rem;color:#6B6552;'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
+                    cols[0].markdown(f"**{p_desc}**  \n{dh.EMOJI_GRUPO.get(p_grupo, '')} <span style='font-size:0.75rem;color:{C['ink_soft']};'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
                     cols[1].markdown(f"<span style='font-size:0.85rem;'>{_fmt(prow.get('valor'), 'valor')}</span>", unsafe_allow_html=True)
-                    cols[2].markdown(f"<span style='font-size:0.85rem;color:#6B6552;'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
-                    cols[3].markdown(f"<span style='font-size:0.85rem;color:#6B6552;'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
+                    cols[2].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
+                    cols[3].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
                     if _pode_editar and _escrita_ok:
                         if cols[4].button("✏️", key=f"edpar_{gi}_{pi}", help="Editar parcela"):
                             st.session_state["edit_target"] = ("parcela", gi, pi)
                             st.rerun()
-                    st.markdown("<hr style='margin:4px 0;border:none;border-top:1px solid #E3DAC7;'>", unsafe_allow_html=True)
+                    st.markdown(f"<hr style='margin:4px 0;border:none;border-top:1px solid {C['line']};'>", unsafe_allow_html=True)
             else:
                 st.caption("Nenhuma parcela lançada para este pedido.")
 
@@ -1986,7 +2082,7 @@ st.markdown(f"""
 <div style="
     padding-top: 16px;
     text-align: center;
-    color: #6B6552;
+    color: {C['ink_soft']};
     font-size: 0.72rem;
 ">
     {_idg_html}
