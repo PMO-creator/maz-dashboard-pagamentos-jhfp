@@ -205,10 +205,10 @@ html, body, [class*="css"] {
     display: flex; align-items: center; justify-content: center;
     font-size: 1.15rem; line-height: 1;
 }
-.kpi-chip.folha  { background: color-mix(in srgb, var(--folha) 14%, transparent); }
-.kpi-chip.rio    { background: color-mix(in srgb, var(--rio) 14%, transparent); }
-.kpi-chip.sol    { background: color-mix(in srgb, var(--sol) 18%, transparent); }
-.kpi-chip.urucum { background: color-mix(in srgb, var(--urucum) 14%, transparent); }
+.kpi-chip.folha  { background: color-mix(in srgb, var(--folha) 14%, transparent); color: var(--folha); }
+.kpi-chip.rio    { background: color-mix(in srgb, var(--rio) 14%, transparent); color: var(--rio); }
+.kpi-chip.sol    { background: color-mix(in srgb, var(--sol) 18%, transparent); color: var(--sol-texto); }
+.kpi-chip.urucum { background: color-mix(in srgb, var(--urucum) 14%, transparent); color: var(--urucum); }
 .kpi-pill {
     font-size: 0.66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
     letter-spacing: 0.02em; white-space: nowrap;
@@ -496,6 +496,80 @@ def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
     return all(c in df.columns for c in colunas)
 
 
+# --------------------------------------------------------------------------- #
+# ÍCONES DE LINHA — usados onde nós controlamos o HTML (chips de KPI,         #
+# títulos de seção, badges/selos). Widgets NATIVOS do Streamlit (st.button,   #
+# st.expander, st.multiselect...) só aceitam texto simples no rótulo — não    #
+# renderizam SVG — então esses continuam com emoji, por limitação da          #
+# ferramenta, não por escolha.                                                #
+# --------------------------------------------------------------------------- #
+
+_ICON_PATHS = {
+    "list":         '<path d="M3 7h18M3 12h18M3 17h18"/>',
+    "bar_chart":    '<path d="M4 20V10M12 20V4M20 20v-7"/>',
+    "check_circle": '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5 5-5"/>',
+    "dollar":       '<path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+    "clock":        '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
+    "alert_tri":    '<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+    "alert_octagon":'<path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z"/><path d="M12 8v5M12 16h.01"/>',
+    "trend_up":     '<path d="M7 17 17 7M9 7h8v8"/>',
+    "grid":         '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    "calendar":     '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+    "file_text":    '<path d="M6 3h9l5 5v13H6z"/><path d="M15 3v5h5M9 13h6M9 17h6"/>',
+    "plus":         '<path d="M12 5v14M5 12h14"/>',
+    "user":         '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7"/>',
+    "bell":         '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+    "refresh":      '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>',
+    "dash":         '<path d="M5 12h14"/>',
+    "link":         '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+}
+
+
+@st.cache_data
+def _svg_icon_data_uri(nome: str, tamanho: int, cor: str, peso: float) -> str:
+    """Monta o SVG e cacheia como data URI base64 (a combinação nome+cor+tamanho é a chave)."""
+    import base64
+    inner = _ICON_PATHS.get(nome, _ICON_PATHS["dash"])
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{tamanho}" height="{tamanho}" '
+        f'viewBox="0 0 24 24" fill="none" stroke="{cor}" stroke-width="{peso}" '
+        f'stroke-linecap="round" stroke-linejoin="round">{inner}</svg>'
+    )
+    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{b64}"
+
+
+def svg_icon(nome: str, tamanho: int = 16, cor: str = "#6B6552", peso: float = 1.9) -> str:
+    """
+    Ícone de linha (estilo do mockup aprovado), como <img> de SVG em data URI.
+    Precisa de `cor` explícita (hex) — não usa 'currentColor': o card_html do
+    dashboard é renderizado via st.html(), que remove tags <svg> inline por
+    sanitização, mas preserva <img src="data:image/svg+xml;...">. Testado e
+    confirmado localmente antes desta escolha.
+    """
+    uri = _svg_icon_data_uri(nome, tamanho, cor, peso)
+    return (
+        f'<img src="{uri}" width="{tamanho}" height="{tamanho}" alt="" '
+        f'style="display:inline-block;vertical-align:middle;flex-shrink:0;">'
+    )
+
+
+# Ícone de linha correspondente a cada grupo de status / faixa de prazo
+_ICON_POR_GRUPO = {
+    "concluido":    "check_circle",
+    "em_andamento": "refresh",
+    "alerta":       "alert_tri",
+    "critico":      "alert_octagon",
+}
+_ICON_POR_PRAZO = {
+    dh.PRAZO_VENCIDO:   "alert_octagon",
+    dh.PRAZO_URGENTE:   "alert_tri",
+    dh.PRAZO_ATENCAO:   "bell",
+    dh.PRAZO_TRANQUILO: "check_circle",
+    dh.PRAZO_SEM_DATA:  "dash",
+}
+
+
 def _val_num(v) -> float:
     """
     Converte para float, aceitando tanto números 'de verdade' (vindos do
@@ -606,8 +680,8 @@ def estado_vazio(mensagem: str) -> None:
     )
 
 
-def secao_titulo(texto: str) -> None:
-    """Renderiza um título de seção com sublinhado no grafismo de cobra da marca."""
+def secao_titulo(texto: str, icone: str = "dash") -> None:
+    """Título de seção com ícone de linha + sublinhado no grafismo de cobra da marca."""
     div = _logo_data_uri("cobra_divisor.png")
     if div:
         estilo = (
@@ -616,7 +690,11 @@ def secao_titulo(texto: str) -> None:
         )
     else:
         estilo = ""
-    st.markdown(f'<p class="section-title" style="{estilo}">{texto}</p>', unsafe_allow_html=True)
+    ic = svg_icon(icone, tamanho=15, peso=2.1, cor=C["ink"])
+    st.markdown(
+        f'<p class="section-title" style="{estilo}display:flex;align-items:center;gap:8px;">{ic}{texto}</p>',
+        unsafe_allow_html=True,
+    )
 
 
 def kpi_card(valor: str, sub: str = "", classe: str = "folha",
@@ -625,8 +703,8 @@ def kpi_card(valor: str, sub: str = "", classe: str = "folha",
     Card de KPI no estilo SaaS: chip de ícone (cor da marca) + pílula de
     variação/estado no topo, número grande e rótulo abaixo.
     `classe`/`pill_classe` ∈ {folha, rio, sol, urucum}.
-    O `icone` é um emoji por enquanto (será trocado por SVG de linha na
-    etapa de ícones). `sub` é o rótulo descritivo sob o número.
+    `icone` é HTML pronto — normalmente o retorno de svg_icon(). `sub` é o
+    rótulo descritivo sob o número.
     """
     classe = classe or "folha"
     chip = f'<div class="kpi-chip {classe}">{icone}</div>'
@@ -1307,7 +1385,7 @@ def _bloco_novo_lancamento():
     """Owner/Admin: lança direto na planilha (isolado com @st.fragment)."""
     if _papel_usuario not in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
         return
-    secao_titulo("➕ Novo Lançamento")
+    secao_titulo("Novo Lançamento", icone="plus")
     if "gcp_service_account" not in st.secrets:
         st.info(
             "🔒 Os lançamentos pelo dashboard exigem a Service Account configurada "
@@ -1324,7 +1402,7 @@ def _bloco_solicitar_pedido():
     """Requisitante: envia o pedido para a fila de aprovação do Owner."""
     if _papel_usuario != dh.PAPEL_REQUISITANTE:
         return
-    secao_titulo("🙋 Solicitar Pedido de Compra")
+    secao_titulo("Solicitar Pedido de Compra", icone="user")
     if "gcp_service_account" not in st.secrets:
         st.info(
             "🔒 O envio de solicitações exige a Service Account configurada "
@@ -1344,7 +1422,7 @@ def _bloco_meus_pedidos():
     if "gcp_service_account" not in st.secrets:
         return
 
-    secao_titulo("🙋 Meus Pedidos")
+    secao_titulo("Meus Pedidos", icone="user")
     login_atual = st.session_state.get("login_usuario", "")
     try:
         meus = dh.listar_solicitacoes(sheets_url_input, apenas_login=login_atual)
@@ -1404,7 +1482,7 @@ _bloco_meus_pedidos()
 # SEÇÃO 1 — KPI CARDS (visão macro para a diretoria)                           #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("📊 Indicadores Executivos")
+secao_titulo("Indicadores Executivos", icone="bar_chart")
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
@@ -1412,14 +1490,14 @@ with col1:
     st.markdown(kpi_card(
         fmt_brl(kpis["orcamento_total"]),
         sub="Orçamento total contratado",
-        classe="folha", icone="📋",
+        classe="folha", icone=svg_icon("list", cor=C["folha"]),
     ), unsafe_allow_html=True)
 
 with col2:
     st.markdown(kpi_card(
         fmt_brl(kpis["pago"]),
         sub="Total pago",
-        classe="rio", icone="✅",
+        classe="rio", icone=svg_icon("check_circle", cor=C["rio"]),
         pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
     ), unsafe_allow_html=True)
 
@@ -1427,7 +1505,7 @@ with col3:
     st.markdown(kpi_card(
         fmt_brl(kpis["a_pagar"]),
         sub="Saldo a pagar",
-        classe="folha", icone="💰",
+        classe="folha", icone=svg_icon("dollar", cor=C["folha"]),
         pill_texto="pendente", pill_classe="sol",
     ), unsafe_allow_html=True)
 
@@ -1435,16 +1513,17 @@ with col4:
     st.markdown(kpi_card(
         fmt_brl(kpis["em_gargalo"]),
         sub="Em gargalo · aguardando",
-        classe="sol", icone="⏳",
+        classe="sol", icone=svg_icon("clock", cor=C["sol_texto"]),
         pill_texto="atenção", pill_classe="sol",
     ), unsafe_allow_html=True)
 
 with col5:
     _venc = kpis["vencidos"]
+    _cor_venc = C["urucum"] if _venc > 0 else C["folha"]
     st.markdown(kpi_card(
         str(_venc),
         sub="Contratos vencidos",
-        classe="urucum" if _venc > 0 else "folha", icone="🚨",
+        classe="urucum" if _venc > 0 else "folha", icone=svg_icon("alert_tri", cor=_cor_venc),
         pill_texto="crítico" if _venc > 0 else "ok",
         pill_classe="urucum" if _venc > 0 else "folha",
     ), unsafe_allow_html=True)
@@ -1453,7 +1532,7 @@ with col6:
     st.markdown(kpi_card(
         f"{kpis['perc_execucao']:.1f}%",
         sub=f"{kpis['fornecedores']} fornecedores ativos",
-        classe="rio", icone="📈",
+        classe="rio", icone=svg_icon("trend_up", cor=C["rio"]),
     ), unsafe_allow_html=True)
 
 # Barra de progresso da execução orçamentária
@@ -1472,7 +1551,7 @@ st.markdown(f"""
 # SEÇÃO — PRAZOS DE CONTRATOS (visível para todos os papéis)                  #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("📅 Prazos de Contratos")
+secao_titulo("Prazos de Contratos", icone="calendar")
 
 if "termino_contrato" not in df_compras.columns:
     st.caption("Coluna de término do contrato não encontrada na planilha.")
@@ -1544,14 +1623,15 @@ else:
                 else:
                     _dias_txt = "sem data de término"
 
+                _ic_prazo = svg_icon(_ICON_POR_PRAZO.get(_ps, "dash"), tamanho=14, cor=_cor)
                 st.markdown(
                     f"""
                     <div style="display:flex;align-items:center;gap:12px;background:{C['surface']};
                                 border:1px solid {C['line']};border-left:4px solid {_cor};
-                                border-radius:6px;padding:10px 16px;margin-bottom:6px;">
+                                border-radius:14px;padding:12px 18px;margin-bottom:8px;
+                                box-shadow:{C['card_shadow']};">
                         <div style="flex:1;">
-                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;
-                                         font-weight:700;color:{C['ink']};font-size:0.9rem;">
+                            <span style="font-weight:700;color:{C['ink']};font-size:0.9rem;">
                                 {html.escape(_val_txt(linha.get('fornecedor')) or '—')}
                             </span>
                             <span style="color:{C['ink_soft']};font-size:0.76rem;margin-left:8px;">
@@ -1561,8 +1641,8 @@ else:
                         <div style="color:{C['ink_soft']};font-size:0.78rem;white-space:nowrap;">
                             {_fmt(linha.get('termino_contrato'), 'data')}
                         </div>
-                        <div style="color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
-                            {dh.EMOJI_PRAZO[_ps]} {html.escape(_dias_txt)}
+                        <div style="display:flex;align-items:center;gap:6px;color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
+                            {_ic_prazo} {html.escape(_dias_txt)}
                         </div>
                     </div>
                     """,
@@ -1574,7 +1654,7 @@ else:
 # SEÇÃO 2 — PANORAMA GERAL (2 gráficos lado a lado)                            #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("🗺️ Panorama Geral")
+secao_titulo("Panorama Geral", icone="grid")
 
 col_esq, col_dir = st.columns([1.1, 0.9])
 
@@ -1663,7 +1743,7 @@ with col_dir, st.container(border=True, key="panel_top10"):
 # SEÇÃO 3 — ANÁLISE DE GARGALOS (foco em tomada de decisão)                    #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("⚠️ Análise de Gargalos · Pagamentos Bloqueados")
+secao_titulo("Análise de Gargalos · Pagamentos Bloqueados", icone="alert_tri")
 
 # Status de alerta e em andamento são os gargalos a monitorar
 status_gargalo_lista = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
@@ -1736,7 +1816,7 @@ else:
 # SEÇÃO 4 — FLUXO TEMPORAL DE PAGAMENTOS                                       #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("📅 Fluxo Temporal de Pagamentos")
+secao_titulo("Fluxo Temporal de Pagamentos", icone="calendar")
 
 if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
     df_tempo = df_pag.dropna(subset=["mes_pgto"])
@@ -1791,7 +1871,7 @@ else:
 # SEÇÃO 5 — DETALHAMENTO HIERÁRQUICO (Compras + Pagamentos expansíveis)        #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("📋 Acompanhar Pedidos de Compra")
+secao_titulo("Acompanhar Pedidos de Compra", icone="file_text")
 
 
 # Cor do TEXTO do badge (versão com bom contraste sobre o fundo do card)
@@ -2112,7 +2192,7 @@ else:
         if prazo_status not in _cores_prazo_ativo2:
             prazo_status = "sem_data"
         cor_prazo   = _cores_prazo_ativo2[prazo_status]
-        emoji_prazo = dh.EMOJI_PRAZO[prazo_status]
+        icone_prazo = svg_icon(_ICON_POR_PRAZO.get(prazo_status, "dash"), tamanho=13, cor=cor_prazo)
         label_prazo = dh.LABEL_PRAZO[prazo_status]
 
         link_val = _val_txt(compra.get("link_contrato"))
@@ -2121,13 +2201,14 @@ else:
             if link_val.lower().startswith("http"):
                 partes_prazo.append(
                     f'<a href="{html.escape(link_val)}" target="_blank" '
-                    f'style="color:inherit;text-decoration:underline;">🔗 Contrato</a>'
+                    f'style="color:inherit;text-decoration:underline;display:inline-flex;'
+                    f'align-items:center;gap:4px;">{svg_icon("link", tamanho=13, cor=cor_prazo)} Contrato</a>'
                 )
             else:
-                partes_prazo.append(f"📄 {html.escape(link_val)}")
+                partes_prazo.append(f'{svg_icon("file_text", tamanho=13, cor=cor_prazo)} {html.escape(link_val)}')
         if termino != "—":
-            partes_prazo.append(f"📅 Término: {termino}")
-        partes_prazo.append(f"{emoji_prazo} {label_prazo}")
+            partes_prazo.append(f'{svg_icon("calendar", tamanho=13, cor=cor_prazo)} Término: {termino}')
+        partes_prazo.append(f"{icone_prazo} {label_prazo}")
 
         prazo_chip_html = (
             f'<span style="display:inline-flex;align-items:center;flex-wrap:wrap;'
@@ -2181,7 +2262,8 @@ else:
                     p_desc  = _val_txt(prow.get("descritivo")) or "—"
                     p_stat  = _val_txt(prow.get("status")) or "Sem status"
                     cols = st.columns([3, 2, 2, 2, 1]) if (_pode_editar and _escrita_ok) else st.columns([3, 2, 2, 3])
-                    cols[0].markdown(f"**{p_desc}**  \n{dh.EMOJI_GRUPO.get(p_grupo, '')} <span style='font-size:0.75rem;color:{C['ink_soft']};'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
+                    _ic_grupo = svg_icon(_ICON_POR_GRUPO.get(p_grupo, "dash"), tamanho=13, cor=dh.cores_grupo(TEMA_ATUAL).get(p_grupo, C["ink_soft"]))
+                    cols[0].markdown(f"**{p_desc}**  \n{_ic_grupo} <span style='font-size:0.75rem;color:{C['ink_soft']};'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
                     cols[1].markdown(f"<span style='font-size:0.85rem;'>{_fmt(prow.get('valor'), 'valor')}</span>", unsafe_allow_html=True)
                     cols[2].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
                     cols[3].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
