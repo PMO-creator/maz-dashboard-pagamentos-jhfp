@@ -103,19 +103,21 @@ st.set_page_config(
 # acentos são levemente aclarados para manter contraste sobre fundo escuro.   #
 # --------------------------------------------------------------------------- #
 TEMA_CLARO = {
-    "paper": "#F6F1E7", "paper_deep": "#EFE8D8", "surface": "#FCFAF4",
-    "ink": "#262419", "ink_soft": "#6B6552", "line": "#E3DAC7",
+    "paper": "#ECE7DC", "paper_deep": "#E4DECF", "surface": "#FFFFFF",
+    "ink": "#26261C", "ink_soft": "#7C7563", "line": "#EAE3D4",
     "folha": "#4F6A1E", "urucum": "#E02838", "sol": "#E8920A", "rio": "#3E9489",
     "sol_texto": "#B97200", "rio_texto": "#2C6E64",
     "shadow_soft": "#2624190F", "upload_border": "#4F6A1E55",
+    "card_shadow": "0 1px 2px #26261C0A, 0 6px 20px #26261C0F",
     "bar_scale": ["#C9D6B0", "#7FA34A", "#4F6A1E"],
 }
 TEMA_ESCURO = {
-    "paper": "#0F1613", "paper_deep": "#182420", "surface": "#1E2B26",
+    "paper": "#0F1613", "paper_deep": "#151F1A", "surface": "#1B2822",
     "ink": "#EDEAE0", "ink_soft": "#9BAAA0", "line": "#2C3B34",
     "folha": "#7FB251", "urucum": "#F16B74", "sol": "#F2AC4E", "rio": "#5FC4B6",
     "sol_texto": "#F2AC4E", "rio_texto": "#5FC4B6",
     "shadow_soft": "#FFFFFF14", "upload_border": "#7FB25166",
+    "card_shadow": "0 1px 2px #00000030, 0 8px 24px #00000040",
     "bar_scale": ["#26362B", "#4F7A3E", "#7FB251"],
 }
 
@@ -157,6 +159,7 @@ st.markdown(f"""
     --rio-texto:      {C['rio_texto']};
     --shadow-soft:    {C['shadow_soft']};
     --upload-border:  {C['upload_border']};
+    --card-shadow:    {C['card_shadow']};
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -185,46 +188,47 @@ html, body, [class*="css"] {
     margin-bottom: 18px;
 }
 
-/* --- Cards de KPI --- */
+/* --- Cards de KPI (estilo SaaS: arredondado, sombra, chip + pílula) --- */
 .kpi-card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 6px;
-    overflow: hidden;
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: var(--card-shadow);
     transition: box-shadow 0.2s, transform 0.2s;
+    height: 100%;
 }
-.kpi-card:hover { box-shadow: 0 4px 18px var(--shadow-soft); transform: translateY(-1px); }
-.kpi-cap { height: 4px; }
-.kpi-cap.folha { background: var(--folha); }
-.kpi-cap.rio   { background: var(--rio); }
-.kpi-cap.sol   { background: var(--sol); }
-.kpi-cap.urucum{ background: var(--urucum); }
-.kpi-body { padding: 16px 20px 18px; }
-.kpi-label {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: var(--ink-soft);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    margin-bottom: 10px;
+.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 2px 6px #26261C0F, 0 16px 32px #26261C1A; }
+.kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.kpi-chip {
+    width: 42px; height: 42px; border-radius: 13px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.15rem; line-height: 1;
 }
+.kpi-chip.folha  { background: color-mix(in srgb, var(--folha) 14%, transparent); }
+.kpi-chip.rio    { background: color-mix(in srgb, var(--rio) 14%, transparent); }
+.kpi-chip.sol    { background: color-mix(in srgb, var(--sol) 18%, transparent); }
+.kpi-chip.urucum { background: color-mix(in srgb, var(--urucum) 14%, transparent); }
+.kpi-pill {
+    font-size: 0.66rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+    letter-spacing: 0.02em; white-space: nowrap;
+}
+.kpi-pill.folha  { background: color-mix(in srgb, var(--folha) 14%, transparent); color: var(--folha); }
+.kpi-pill.rio    { background: color-mix(in srgb, var(--rio) 16%, transparent); color: var(--rio-texto); }
+.kpi-pill.sol    { background: color-mix(in srgb, var(--sol) 18%, transparent); color: var(--sol-texto); }
+.kpi-pill.urucum { background: color-mix(in srgb, var(--urucum) 14%, transparent); color: var(--urucum); }
 .kpi-value {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
-    font-size: 1.7rem;
+    font-size: 1.65rem;
     font-weight: 700;
     color: var(--ink);
     line-height: 1.05;
+    letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
-.kpi-value.folha  { color: var(--folha); }
-.kpi-value.rio    { color: var(--rio); }
-.kpi-value.sol    { color: var(--sol-texto); }
-.kpi-value.urucum { color: var(--urucum); }
-.kpi-sub {
-    font-size: 0.72rem;
+.kpi-label {
+    font-size: 0.8rem;
     color: var(--ink-soft);
-    margin-top: 8px;
+    margin-top: 3px;
 }
 
 /* --- Cabeçalho principal --- */
@@ -396,9 +400,15 @@ section.main,
    (ex: o selo vermelho de pendentes, que tem texto branco inline). */
 [data-testid="stAppViewContainer"] .stMarkdown p,
 [data-testid="stAppViewContainer"] .stMarkdown li,
+[data-testid="stAppViewContainer"] .stMarkdown h1,
+[data-testid="stAppViewContainer"] .stMarkdown h2,
+[data-testid="stAppViewContainer"] .stMarkdown h3,
 [data-testid="stAppViewContainer"] label p,
 [data-testid="stSidebar"] .stMarkdown p,
 [data-testid="stSidebar"] .stMarkdown li,
+[data-testid="stSidebar"] .stMarkdown h1,
+[data-testid="stSidebar"] .stMarkdown h2,
+[data-testid="stSidebar"] .stMarkdown h3,
 [data-testid="stSidebar"] label p,
 [data-testid="stWidgetLabel"] p,
 [data-testid="stExpander"] summary,
@@ -598,19 +608,29 @@ def secao_titulo(texto: str) -> None:
     st.markdown(f'<p class="section-title" style="{estilo}">{texto}</p>', unsafe_allow_html=True)
 
 
-def kpi_card(label: str, valor: str, sub: str = "", classe: str = "") -> str:
-    """Retorna o HTML de um card de KPI. `classe` ∈ {folha, rio, sol, urucum}."""
-    cap = f'<div class="kpi-cap {classe}"></div>' if classe else '<div class="kpi-cap folha"></div>'
-    return f"""
-    <div class="kpi-card">
-        {cap}
-        <div class="kpi-body">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value {classe}">{valor}</div>
-            <div class="kpi-sub">{sub}</div>
-        </div>
-    </div>
+def kpi_card(valor: str, sub: str = "", classe: str = "folha",
+             icone: str = "", pill_texto: str = "", pill_classe: str = "") -> str:
     """
+    Card de KPI no estilo SaaS: chip de ícone (cor da marca) + pílula de
+    variação/estado no topo, número grande e rótulo abaixo.
+    `classe`/`pill_classe` ∈ {folha, rio, sol, urucum}.
+    O `icone` é um emoji por enquanto (será trocado por SVG de linha na
+    etapa de ícones). `sub` é o rótulo descritivo sob o número.
+    """
+    classe = classe or "folha"
+    chip = f'<div class="kpi-chip {classe}">{icone}</div>'
+    pill = f'<span class="kpi-pill {pill_classe or classe}">{html.escape(pill_texto)}</span>' if pill_texto else ""
+    sub_html = f'<div class="kpi-label">{html.escape(sub)}</div>' if sub else ""
+    # HTML em uma única linha lógica, SEM linhas em branco internas — uma
+    # linha em branco faria o st.markdown encerrar o bloco HTML e renderizar
+    # o resto como texto (bug já observado com pílula vazia).
+    return (
+        '<div class="kpi-card">'
+        f'<div class="kpi-top">{chip}{pill}</div>'
+        f'<div class="kpi-value">{valor}</div>'
+        f'{sub_html}'
+        '</div>'
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1379,50 +1399,50 @@ col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 with col1:
     st.markdown(kpi_card(
-        "Orçamento Total",
         fmt_brl(kpis["orcamento_total"]),
-        "Valor total contratado",
-        "folha"
+        sub="Orçamento total contratado",
+        classe="folha", icone="📋",
     ), unsafe_allow_html=True)
 
 with col2:
     st.markdown(kpi_card(
-        "Total Pago",
         fmt_brl(kpis["pago"]),
-        "Pagamentos realizados",
-        "rio"
+        sub="Total pago",
+        classe="rio", icone="✅",
+        pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
     ), unsafe_allow_html=True)
 
 with col3:
     st.markdown(kpi_card(
-        "Saldo a Pagar",
         fmt_brl(kpis["a_pagar"]),
-        "Pagamentos pendentes",
-        ""
+        sub="Saldo a pagar",
+        classe="folha", icone="💰",
+        pill_texto="pendente", pill_classe="sol",
     ), unsafe_allow_html=True)
 
 with col4:
     st.markdown(kpi_card(
-        "Em Gargalo",
         fmt_brl(kpis["em_gargalo"]),
-        "Aguardando desbloqueio",
-        "sol"
+        sub="Em gargalo · aguardando",
+        classe="sol", icone="⏳",
+        pill_texto="atenção", pill_classe="sol",
     ), unsafe_allow_html=True)
 
 with col5:
+    _venc = kpis["vencidos"]
     st.markdown(kpi_card(
-        "Contratos Vencidos",
-        str(kpis["vencidos"]),
-        "Requer atenção imediata",
-        "urucum" if kpis["vencidos"] > 0 else "folha"
+        str(_venc),
+        sub="Contratos vencidos",
+        classe="urucum" if _venc > 0 else "folha", icone="🚨",
+        pill_texto="crítico" if _venc > 0 else "ok",
+        pill_classe="urucum" if _venc > 0 else "folha",
     ), unsafe_allow_html=True)
 
 with col6:
     st.markdown(kpi_card(
-        "Execução Orçamentária",
         f"{kpis['perc_execucao']:.1f}%",
-        f"{kpis['fornecedores']} fornecedores ativos",
-        "folha"
+        sub=f"{kpis['fornecedores']} fornecedores ativos",
+        classe="rio", icone="📈",
     ), unsafe_allow_html=True)
 
 # Barra de progresso da execução orçamentária
@@ -1937,7 +1957,7 @@ if _flash_avisos:
 # ---- Busca: caixas separadas, uma por campo ----
 st.markdown(
     "<span class='maz-display' style='font-size:0.72rem;font-weight:700;"
-    "letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
+    f"letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
     unsafe_allow_html=True,
 )
 bc1, bc2, bc3, bc4 = st.columns(4)

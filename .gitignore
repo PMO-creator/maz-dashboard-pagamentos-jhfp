@@ -22,3 +22,4 @@ __pycache__/
 assets_ref/
 smoke_out.txt
 smoke_err.txt
+_localtest/
