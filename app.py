@@ -1013,95 +1013,96 @@ secao_titulo("📅 Prazos de Contratos")
 if "termino_contrato" not in df_compras.columns:
     st.caption("Coluna de término do contrato não encontrada na planilha.")
 else:
-    _MESES_PT = {
-        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
-        7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-    }
-
-    def _rotulo_mes(periodo: str) -> str:
-        try:
-            ano, mes = periodo.split("-")
-            return f"{_MESES_PT[int(mes)]} {ano}"
-        except Exception:
-            return periodo
-
-    col_faixa, col_mes = st.columns(2)
-    with col_faixa:
-        opcoes_faixa = {
-            f"{dh.EMOJI_PRAZO[k]} {dh.LABEL_PRAZO[k]}": k
-            for k in [dh.PRAZO_VENCIDO, dh.PRAZO_URGENTE, dh.PRAZO_ATENCAO, dh.PRAZO_TRANQUILO, dh.PRAZO_SEM_DATA]
+    with st.expander("🔍 Ver contratos por prazo de vencimento (filtrar e listar)", expanded=False):
+        _MESES_PT = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+            7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
         }
-        sel_faixa_label = st.multiselect(
-            "Faixa de urgência",
-            options=list(opcoes_faixa.keys()),
-            default=[],
-            placeholder="Todas as faixas",
-        )
-        sel_faixas = [opcoes_faixa[l] for l in sel_faixa_label]
 
-    with col_mes:
-        meses_disponiveis = sorted(
-            [m for m in df_compras["mes_vencimento"].dropna().unique().tolist() if m]
-        )
-        opcoes_mes = {_rotulo_mes(m): m for m in meses_disponiveis}
-        sel_mes_label = st.selectbox(
-            "Mês de vencimento",
-            options=["Todos os meses"] + list(opcoes_mes.keys()),
-        )
-        sel_mes = opcoes_mes.get(sel_mes_label)
+        def _rotulo_mes(periodo: str) -> str:
+            try:
+                ano, mes = periodo.split("-")
+                return f"{_MESES_PT[int(mes)]} {ano}"
+            except Exception:
+                return periodo
 
-    df_prazos = df_compras.copy()
-    if sel_faixas:
-        df_prazos = df_prazos[df_prazos["prazo_status"].isin(sel_faixas)]
-    if sel_mes:
-        df_prazos = df_prazos[df_prazos["mes_vencimento"] == sel_mes]
-
-    # Ordena por urgência: vencidos primeiro, depois por proximidade da data
-    _ordem_urgencia = {dh.PRAZO_VENCIDO: 0, dh.PRAZO_URGENTE: 1, dh.PRAZO_ATENCAO: 2, dh.PRAZO_TRANQUILO: 3, dh.PRAZO_SEM_DATA: 4}
-    df_prazos = df_prazos.assign(_ordem=df_prazos["prazo_status"].map(_ordem_urgencia))
-    df_prazos = df_prazos.sort_values(["_ordem", "dias_para_vencer"], na_position="last")
-
-    st.caption(f"**{len(df_prazos)}** contrato(s) encontrados")
-
-    if df_prazos.empty:
-        estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
-    else:
-        for _, linha in df_prazos.iterrows():
-            _ps = str(linha.get("prazo_status", "sem_data"))
-            if _ps not in dh.CORES_PRAZO:
-                _ps = "sem_data"
-            _cor = dh.CORES_PRAZO[_ps]
-            _dias = linha.get("dias_para_vencer")
-            if pd.notna(_dias):
-                _dias = int(_dias)
-                _dias_txt = f"vence em {_dias} dia(s)" if _dias >= 0 else f"vencido há {abs(_dias)} dia(s)"
-            else:
-                _dias_txt = "sem data de término"
-
-            st.markdown(
-                f"""
-                <div style="display:flex;align-items:center;gap:12px;background:#FCFAF4;
-                            border:1px solid #E3DAC7;border-left:4px solid {_cor};
-                            border-radius:6px;padding:10px 16px;margin-bottom:6px;">
-                    <div style="flex:1;">
-                        <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;
-                                     font-weight:700;color:#262419;font-size:0.9rem;">
-                            {html.escape(_val_txt(linha.get('fornecedor')) or '—')}
-                        </span>
-                        <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">
-                            {html.escape(_val_txt(linha.get('descritivo')) or '—')}
-                        </span>
-                    </div>
-                    <div style="color:#6B6552;font-size:0.78rem;white-space:nowrap;">
-                        {_fmt(linha.get('termino_contrato'), 'data')}
-                    </div>
-                    <div style="color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
-                        {dh.EMOJI_PRAZO[_ps]} {html.escape(_dias_txt)}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+        col_faixa, col_mes = st.columns(2)
+        with col_faixa:
+            opcoes_faixa = {
+                f"{dh.EMOJI_PRAZO[k]} {dh.LABEL_PRAZO[k]}": k
+                for k in [dh.PRAZO_VENCIDO, dh.PRAZO_URGENTE, dh.PRAZO_ATENCAO, dh.PRAZO_TRANQUILO, dh.PRAZO_SEM_DATA]
+            }
+            sel_faixa_label = st.multiselect(
+                "Faixa de urgência",
+                options=list(opcoes_faixa.keys()),
+                default=[],
+                placeholder="Todas as faixas",
             )
+            sel_faixas = [opcoes_faixa[l] for l in sel_faixa_label]
+
+        with col_mes:
+            meses_disponiveis = sorted(
+                [m for m in df_compras["mes_vencimento"].dropna().unique().tolist() if m]
+            )
+            opcoes_mes = {_rotulo_mes(m): m for m in meses_disponiveis}
+            sel_mes_label = st.selectbox(
+                "Mês de vencimento",
+                options=["Todos os meses"] + list(opcoes_mes.keys()),
+            )
+            sel_mes = opcoes_mes.get(sel_mes_label)
+
+        df_prazos = df_compras.copy()
+        if sel_faixas:
+            df_prazos = df_prazos[df_prazos["prazo_status"].isin(sel_faixas)]
+        if sel_mes:
+            df_prazos = df_prazos[df_prazos["mes_vencimento"] == sel_mes]
+
+        # Ordena por urgência: vencidos primeiro, depois por proximidade da data
+        _ordem_urgencia = {dh.PRAZO_VENCIDO: 0, dh.PRAZO_URGENTE: 1, dh.PRAZO_ATENCAO: 2, dh.PRAZO_TRANQUILO: 3, dh.PRAZO_SEM_DATA: 4}
+        df_prazos = df_prazos.assign(_ordem=df_prazos["prazo_status"].map(_ordem_urgencia))
+        df_prazos = df_prazos.sort_values(["_ordem", "dias_para_vencer"], na_position="last")
+
+        st.caption(f"**{len(df_prazos)}** contrato(s) encontrados")
+
+        if df_prazos.empty:
+            estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
+        else:
+            for _, linha in df_prazos.iterrows():
+                _ps = str(linha.get("prazo_status", "sem_data"))
+                if _ps not in dh.CORES_PRAZO:
+                    _ps = "sem_data"
+                _cor = dh.CORES_PRAZO[_ps]
+                _dias = linha.get("dias_para_vencer")
+                if pd.notna(_dias):
+                    _dias = int(_dias)
+                    _dias_txt = f"vence em {_dias} dia(s)" if _dias >= 0 else f"vencido há {abs(_dias)} dia(s)"
+                else:
+                    _dias_txt = "sem data de término"
+
+                st.markdown(
+                    f"""
+                    <div style="display:flex;align-items:center;gap:12px;background:#FCFAF4;
+                                border:1px solid #E3DAC7;border-left:4px solid {_cor};
+                                border-radius:6px;padding:10px 16px;margin-bottom:6px;">
+                        <div style="flex:1;">
+                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;
+                                         font-weight:700;color:#262419;font-size:0.9rem;">
+                                {html.escape(_val_txt(linha.get('fornecedor')) or '—')}
+                            </span>
+                            <span style="color:#6B6552;font-size:0.76rem;margin-left:8px;">
+                                {html.escape(_val_txt(linha.get('descritivo')) or '—')}
+                            </span>
+                        </div>
+                        <div style="color:#6B6552;font-size:0.78rem;white-space:nowrap;">
+                            {_fmt(linha.get('termino_contrato'), 'data')}
+                        </div>
+                        <div style="color:{_cor};font-weight:700;font-size:0.78rem;white-space:nowrap;">
+                            {dh.EMOJI_PRAZO[_ps]} {html.escape(_dias_txt)}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 # --------------------------------------------------------------------------- #
