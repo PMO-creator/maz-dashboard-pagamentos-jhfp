@@ -441,6 +441,17 @@ input::placeholder, textarea::placeholder { color: var(--ink-soft) !important; o
     border: 1px solid var(--line) !important;
     border-radius: 6px;
 }
+
+/* Painéis de gráfico no estilo SaaS: st.container(border=True, key="panel_...")
+   gera a classe "st-key-<key>" (recurso documentado do Streamlit) — usamos
+   prefixo comum "panel_" para estilizar todos de uma vez. */
+div[class*="st-key-panel_"] {
+    background-color: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 18px !important;
+    padding: 18px 20px !important;
+    box-shadow: var(--card-shadow);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1568,7 +1579,7 @@ secao_titulo("🗺️ Panorama Geral")
 col_esq, col_dir = st.columns([1.1, 0.9])
 
 # --- Gráfico 1: Distribuição por Situação do Fluxo (donut chart) ---
-with col_esq:
+with col_esq, st.container(border=True, key="panel_donut"):
     if tem_colunas(df_pag, "status", "valor"):
         contagem_status = df_pag.groupby("status")["valor"].sum().reset_index()
         contagem_status.columns = ["Status", "Valor"]
@@ -1608,7 +1619,7 @@ with col_esq:
         st.plotly_chart(fig_donut, use_container_width=True)
 
 # --- Gráfico 2: Top 10 Fornecedores por Valor Contratado (barras horizontais) ---
-with col_dir:
+with col_dir, st.container(border=True, key="panel_top10"):
     if tem_colunas(df_compras, "fornecedor", "valor"):
         top_fornecedores = (
             df_compras.groupby("fornecedor")["valor"]
@@ -1667,7 +1678,7 @@ if df_gargalo.empty or not tem_colunas(df_gargalo, "status", "valor"):
 else:
     col_g1, col_g2 = st.columns([1.2, 0.8])
 
-    with col_g1:
+    with col_g1, st.container(border=True, key="panel_gargalo_bar"):
         gargalo_agrupado = (
             df_gargalo.groupby("status")["valor"]
             .sum()
@@ -1706,7 +1717,7 @@ else:
         )
         st.plotly_chart(fig_gargalo, use_container_width=True)
 
-    with col_g2:
+    with col_g2, st.container(border=True, key="panel_gargalo_lista"):
         if tem_colunas(df_gargalo, "fornecedor", "valor"):
             st.markdown("**Fornecedores com maior valor bloqueado**")
             gargalo_forn = (
@@ -1731,44 +1742,45 @@ if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
     df_tempo = df_pag.dropna(subset=["mes_pgto"])
 
     if not df_tempo.empty:
-        df_tempo["Situacao"] = df_tempo["status"].apply(
-            lambda s: "Realizado" if s == "Pago" else "Previsto"
-        )
-        fluxo = (
-            df_tempo.groupby(["mes_pgto", "Situacao"])["valor"]
-            .sum()
-            .reset_index()
-        )
-        fluxo.columns = ["Mês", "Situação", "Valor"]
-        fluxo = fluxo.sort_values("Mês")
+        with st.container(border=True, key="panel_fluxo_tempo"):
+            df_tempo["Situacao"] = df_tempo["status"].apply(
+                lambda s: "Realizado" if s == "Pago" else "Previsto"
+            )
+            fluxo = (
+                df_tempo.groupby(["mes_pgto", "Situacao"])["valor"]
+                .sum()
+                .reset_index()
+            )
+            fluxo.columns = ["Mês", "Situação", "Valor"]
+            fluxo = fluxo.sort_values("Mês")
 
-        fig_tempo = px.bar(
-            fluxo,
-            x="Mês",
-            y="Valor",
-            color="Situação",
-            barmode="group",
-            title="Pagamentos Realizados vs. Previstos por Mês",
-            color_discrete_map={"Realizado": C['folha'], "Previsto": C['sol']},
-            text="Valor",
-        )
-        fig_tempo.update_traces(
-            texttemplate="R$ %{y:,.0f}",
-            textposition="outside",
-            hovertemplate="<b>%{x}</b> · %{data.name}<br>R$ %{y:,.2f}<extra></extra>",
-        )
-        fig_tempo.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font_color=C['ink'],
-            title_font_size=13,
-            title_font_color=C['ink_soft'],
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(t=60, b=40, l=10, r=10),
-        )
-        st.plotly_chart(fig_tempo, use_container_width=True)
+            fig_tempo = px.bar(
+                fluxo,
+                x="Mês",
+                y="Valor",
+                color="Situação",
+                barmode="group",
+                title="Pagamentos Realizados vs. Previstos por Mês",
+                color_discrete_map={"Realizado": C['folha'], "Previsto": C['sol']},
+                text="Valor",
+            )
+            fig_tempo.update_traces(
+                texttemplate="R$ %{y:,.0f}",
+                textposition="outside",
+                hovertemplate="<b>%{x}</b> · %{data.name}<br>R$ %{y:,.2f}<extra></extra>",
+            )
+            fig_tempo.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color=C['ink'],
+                title_font_size=13,
+                title_font_color=C['ink_soft'],
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(t=60, b=40, l=10, r=10),
+            )
+            st.plotly_chart(fig_tempo, use_container_width=True)
     else:
         st.info("Não há datas de pagamento registradas para gerar o gráfico temporal.")
 else:
@@ -2118,18 +2130,19 @@ else:
 
         card_html = f"""
             <div style="
-                background:{C['surface']};border:1px solid {C['line']};border-radius:6px;
-                margin-bottom:6px;font-family:sans-serif;display:flex;overflow:hidden;
+                background:{C['surface']};border:1px solid {C['line']};border-radius:14px;
+                margin-bottom:10px;font-family:sans-serif;display:flex;overflow:hidden;
+                box-shadow:{C['card_shadow']};
             ">
                 <div style="width:5px;flex-shrink:0;background:{cor_spine};"></div>
-                <div style="flex:1;padding:14px 18px;">
+                <div style="flex:1;padding:16px 20px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                         <div>
-                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;font-weight:700;color:{C['ink']};font-size:0.96rem;">{fornecedor}</span>
+                            <span style="font-weight:700;color:{C['ink']};font-size:0.96rem;">{fornecedor}</span>
                             {req_html}
                         </div>
                         <div style="display:flex;align-items:center;gap:12px;">
-                            <span style="font-family:'Futura','Century Gothic','Trebuchet MS',sans-serif;color:{C['ink']};font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>
+                            <span style="color:{C['ink']};font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;">{valor}</span>
                             {badge}
                         </div>
                     </div>
