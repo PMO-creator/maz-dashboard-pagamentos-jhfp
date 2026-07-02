@@ -1437,9 +1437,43 @@ def _parse_data_extenso_pt(texto: str) -> "date | None":
         return None
 
 
+def _parse_data_qualquer(texto: str) -> "date | None":
+    """Aceita data em DD/MM/AAAA ou por extenso ('31 de julho de 2026')."""
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", texto)
+    if m:
+        dia, mes, ano = m.groups()
+        try:
+            return datetime(int(ano), int(mes), int(dia)).date()
+        except ValueError:
+            return None
+    return _parse_data_extenso_pt(texto)
+
+
+def _extrair_termino_vigencia(texto: str) -> "date | None":
+    """
+    Acha a data final de vigência do contrato. Como termos aditivos citam
+    tanto a vigência original quanto as prorrogações, coletamos TODAS as datas
+    finais e devolvemos a mais distante (a prorrogação vigente estende o prazo).
+    Normaliza espaços antes para não depender de quebras de linha do PDF.
+    """
+    t = re.sub(r"\s+", " ", texto)
+    candidatos: list = []
+    padroes = [
+        r"vig[êe]ncia\s+de\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}\s+a\s+(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
+        r"vig[êe]ncia\s+de\s+\d{1,2}/\d{1,2}/\d{4}\s+a\s+(\d{1,2}/\d{1,2}/\d{4})",
+        r"vig[êe]ncia[^.]{0,60}?\bat[ée]\s+(\d{1,2}\s+de\s+\w+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{4})",
+    ]
+    for p in padroes:
+        for m in re.finditer(p, t, re.IGNORECASE):
+            dt = _parse_data_qualquer(m.group(1))
+            if dt:
+                candidatos.append(dt)
+    return max(candidatos) if candidatos else None
+
+
 def _extrair_pedido_compra(texto: str) -> dict:
     """Padrão 'ORDEM DE COMPRA' (PO) gerado pelo próprio sistema do IDG."""
-    d: dict = {}
+    d: dict = {"_tipo": "pedido"}
     m = re.search(r"FORNECEDOR:\s*\n\s*I\.E\.:.*\n\s*(.+)", texto)
     if m:
         d["fornecedor"] = m.group(1).strip()
@@ -1459,12 +1493,16 @@ def _extrair_pedido_compra(texto: str) -> dict:
     if m:
         d["observacoes"] = m.group(1).strip()
         d.setdefault("descritivo", d["observacoes"])
+    # Data de entrega do pedido → serve de término quando não há contrato anexo
+    m = re.search(r"DATA DE ENTREGA:\s*\n\s*CONTRATANTE:\s*\n\s*(\d{2}/\d{2}/\d{4})", texto)
+    if m:
+        d["termino_contrato"] = _parse_data_qualquer(m.group(1))
     return d
 
 
 def _extrair_contrato(texto: str) -> dict:
     """Padrão de Contrato/Termo Aditivo de prestação de serviços do IDG."""
-    d: dict = {}
+    d: dict = {"_tipo": "contrato"}
     m = re.search(r"N[°ºo]\s*(\d{4}\s*[–-]\s*\d+(?:\s*\([^)]*\))?)", texto)
     if m:
         d["numero_contrato"] = f"Contrato nº {re.sub(r'\s+', ' ', m.group(1)).strip()}"
@@ -1477,9 +1515,9 @@ def _extrair_contrato(texto: str) -> dict:
     m = re.search(r"(no prazo de[^.]+?apresenta[çc][ãa]o da Nota\s*Fiscal[^.]*)\.", texto, re.IGNORECASE)
     if m:
         d["observacoes"] = re.sub(r"\s+", " ", m.group(1)).strip()
-    m = re.search(r"prazo de vig[êe]ncia de .+? a (\d{1,2}\s+de\s+\w+\s+de\s+\d{4})", texto, re.IGNORECASE)
-    if m:
-        d["termino_contrato"] = _parse_data_extenso_pt(m.group(1))
+    termino = _extrair_termino_vigencia(texto)
+    if termino:
+        d["termino_contrato"] = termino
     m = re.search(
         r"(TERMO ADITIVO.+?AMAZ[ÔO]NIAS|CONTRATO DE PRESTA[ÇC][ÃA]O.+?AMAZ[ÔO]NIAS)",
         texto, re.IGNORECASE | re.DOTALL,
@@ -1487,6 +1525,40 @@ def _extrair_contrato(texto: str) -> dict:
     if m:
         d["descritivo"] = re.sub(r"\s+", " ", m.group(1)).strip().title()
     return d
+
+
+# Para cada campo, a ordem de fontes preferidas ao mesclar vários documentos.
+# Pedido é a melhor fonte de requisição/valor/descritivo; contrato é a melhor
+# fonte de número, vigência e condição de pagamento.
+_PRIORIDADE_MESCLA = {
+    "fornecedor":       ("pedido", "contrato"),
+    "req_mxm":          ("pedido", "contrato"),
+    "valor":            ("pedido", "contrato"),
+    "descritivo":       ("pedido", "contrato"),
+    "numero_contrato":  ("contrato", "pedido"),
+    "termino_contrato": ("contrato", "pedido"),
+    "observacoes":      ("contrato", "pedido"),
+    "parcelas":         ("contrato", "pedido"),
+}
+
+
+def _mesclar_dados_extraidos(docs: list[dict]) -> dict:
+    """
+    Combina os dados de vários PDFs (ex: pedido de compra + contrato), pegando
+    cada campo da fonte mais confiável (ver _PRIORIDADE_MESCLA). Com um só
+    documento, devolve os dados dele sem alteração.
+    """
+    por_tipo: dict[str, dict] = {}
+    for doc in docs:
+        por_tipo.setdefault(doc.get("_tipo", "pedido"), doc)
+    resultado: dict = {}
+    for campo, ordem in _PRIORIDADE_MESCLA.items():
+        for tipo in ordem:
+            valor = por_tipo.get(tipo, {}).get(campo)
+            if valor:
+                resultado[campo] = valor
+                break
+    return resultado
 
 
 def _extrair_dados_documento_ia(pdf_bytes: bytes) -> dict | None:
@@ -1528,17 +1600,24 @@ def _wizard_pedido(modo: str) -> None:
         _opts_status = dh.STATUS_TODOS
         _idx_status = _opts_status.index(c["status"]) if c.get("status") in _opts_status else 0
 
-        with st.expander("📄 Importar dados de um PDF (pedido de compra ou contrato)", expanded=False):
+        with st.expander("📄 Importar dados de PDF (pedido de compra e/ou contrato)", expanded=False):
             st.caption(
-                "Sobe um pedido de compra ou contrato/termo aditivo (PDF) e os campos "
-                "abaixo são pré-preenchidos automaticamente — confira e ajuste antes de avançar."
+                "Sobe o pedido de compra, o contrato/termo aditivo, ou os dois juntos — "
+                "os campos abaixo são pré-preenchidos automaticamente, combinando o melhor "
+                "de cada documento. Confira e ajuste antes de avançar."
             )
-            _arquivo_ia = st.file_uploader("Documento (PDF)", type=["pdf"], key="upload_ia_doc")
-            if st.button("✨ Extrair dados", key="btn_extrair_ia", disabled=_arquivo_ia is None):
-                with st.spinner("Lendo o documento..."):
-                    _dados_ia = _extrair_dados_documento_ia(_arquivo_ia.read())
+            _arquivos_ia = st.file_uploader(
+                "Documentos (PDF)", type=["pdf"], accept_multiple_files=True, key="upload_ia_doc",
+            )
+            if st.button("✨ Extrair dados", key="btn_extrair_ia", disabled=not _arquivos_ia):
+                with st.spinner("Lendo o(s) documento(s)..."):
+                    _extraidos = [
+                        _d for _arq in _arquivos_ia
+                        if (_d := _extrair_dados_documento_ia(_arq.read()))
+                    ]
+                _dados_ia = _mesclar_dados_extraidos(_extraidos) if _extraidos else None
                 if not _dados_ia:
-                    st.error("Não foi possível reconhecer os dados desse documento. Preencha manualmente abaixo.")
+                    st.error("Não foi possível reconhecer os dados desse(s) documento(s). Preencha manualmente abaixo.")
                 else:
                     # Seed direto nas chaves dos widgets (não só em lanc_compra): um
                     # widget já instanciado ignora `value=` em reruns seguintes — só
