@@ -14,6 +14,7 @@
 import html
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -1388,8 +1389,125 @@ df_filtrado = df
 def _limpar_wizard_lancamento() -> None:
     """Remove do session_state todo o estado do assistente de lançamento."""
     for k in list(st.session_state.keys()):
-        if k.startswith("np_") or k in ("lanc_etapa", "lanc_compra", "lanc_n_parcelas"):
+        if k.startswith("np_") or k.startswith("wiz_") or k in (
+            "lanc_etapa", "lanc_compra", "lanc_n_parcelas", "lanc_parcelas_extraidas",
+        ):
             del st.session_state[k]
+
+
+# --------------------------------------------------------------------------- #
+# Extração de dados de PDF por padrões de texto (sem IA/API paga) — calibrada  #
+# nos modelos de "Ordem de Compra" e "Termo Aditivo/Contrato" do IDG.          #
+# Se o layout de um fornecedor variar muito, o campo simplesmente não é       #
+# encontrado e fica em branco para preenchimento manual (nunca inventa dado). #
+# --------------------------------------------------------------------------- #
+
+_MESES_EXTENSO_PT = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5,
+    "junho": 6, "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10,
+    "novembro": 11, "dezembro": 12,
+}
+
+
+def _extrair_texto_pdf(pdf_bytes: bytes) -> str:
+    import io
+    import pypdf
+    leitor = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+    return "\n".join(pagina.extract_text() or "" for pagina in leitor.pages)
+
+
+def _parse_valor_brl(texto: str) -> float | None:
+    try:
+        return float(texto.strip().replace(".", "").replace(",", "."))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _parse_data_extenso_pt(texto: str) -> "date | None":
+    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", texto, re.IGNORECASE)
+    if not m:
+        return None
+    dia, mes_nome, ano = m.groups()
+    mes = _MESES_EXTENSO_PT.get(mes_nome.lower())
+    if not mes:
+        return None
+    try:
+        return datetime(int(ano), mes, int(dia)).date()
+    except ValueError:
+        return None
+
+
+def _extrair_pedido_compra(texto: str) -> dict:
+    """Padrão 'ORDEM DE COMPRA' (PO) gerado pelo próprio sistema do IDG."""
+    d: dict = {}
+    m = re.search(r"FORNECEDOR:\s*\n\s*I\.E\.:.*\n\s*(.+)", texto)
+    if m:
+        d["fornecedor"] = m.group(1).strip()
+    m = re.search(r"REQUISIÇÃO\(ÕES\):\s*([\d;,\s]+)", texto)
+    if m:
+        d["req_mxm"] = m.group(1).strip().rstrip(";").strip()
+    m = re.search(r"PO #:\s*(\S+)", texto)
+    if m:
+        d["numero_contrato"] = f"Pedido de Compra nº {m.group(1)}"
+    m = re.search(r"^\d+\s+.*R\$\s*[\d.,]+\s+([\d.,]+)\s*$", texto, re.MULTILINE)
+    if m:
+        d["valor"] = _parse_valor_brl(m.group(1))
+    m = re.search(r"Descritivo para emiss[ãa]o de nota fiscal:\s*(.+)", texto)
+    if m:
+        d["descritivo"] = m.group(1).strip()
+    m = re.search(r"OBSERVAÇÃO DO PEDIDO:\s*(.+)", texto)
+    if m:
+        d["observacoes"] = m.group(1).strip()
+        d.setdefault("descritivo", d["observacoes"])
+    return d
+
+
+def _extrair_contrato(texto: str) -> dict:
+    """Padrão de Contrato/Termo Aditivo de prestação de serviços do IDG."""
+    d: dict = {}
+    m = re.search(r"N[°ºo]\s*(\d{4}\s*[–-]\s*\d+(?:\s*\([^)]*\))?)", texto)
+    if m:
+        d["numero_contrato"] = f"Contrato nº {re.sub(r'\s+', ' ', m.group(1)).strip()}"
+    m = re.search(r"De outro lado,\s*([A-ZÁ-Ú0-9][A-ZÀ-Ü0-9.\-\s&/]+?),", texto)
+    if m:
+        d["fornecedor"] = m.group(1).strip()
+    m = re.search(r"valor bruto e total de R\$\s*([\d.,]+)", texto, re.IGNORECASE)
+    if m:
+        d["valor"] = _parse_valor_brl(m.group(1))
+    m = re.search(r"(no prazo de[^.]+?apresenta[çc][ãa]o da Nota\s*Fiscal[^.]*)\.", texto, re.IGNORECASE)
+    if m:
+        d["observacoes"] = re.sub(r"\s+", " ", m.group(1)).strip()
+    m = re.search(r"prazo de vig[êe]ncia de .+? a (\d{1,2}\s+de\s+\w+\s+de\s+\d{4})", texto, re.IGNORECASE)
+    if m:
+        d["termino_contrato"] = _parse_data_extenso_pt(m.group(1))
+    m = re.search(
+        r"(TERMO ADITIVO.+?AMAZ[ÔO]NIAS|CONTRATO DE PRESTA[ÇC][ÃA]O.+?AMAZ[ÔO]NIAS)",
+        texto, re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        d["descritivo"] = re.sub(r"\s+", " ", m.group(1)).strip().title()
+    return d
+
+
+def _extrair_dados_documento_ia(pdf_bytes: bytes) -> dict | None:
+    """
+    Lê o PDF (pedido de compra ou contrato) e tenta reconhecer os campos do
+    wizard de lançamento por padrões de texto — sem IA paga, sem dado saindo
+    do servidor. Nunca escreve nada sozinho: só sugere valores para a pessoa
+    revisar no formulário antes de confirmar.
+
+    Retorna None se o PDF não puder ser lido; campos não reconhecidos ficam
+    simplesmente ausentes do dict (o formulário mantém o padrão vazio/manual).
+    """
+    try:
+        texto = _extrair_texto_pdf(pdf_bytes)
+    except Exception:
+        return None
+    if not texto.strip():
+        return None
+    if re.search(r"ORDEM DE COMPRA", texto, re.IGNORECASE):
+        return _extrair_pedido_compra(texto)
+    return _extrair_contrato(texto)
 
 
 def _wizard_pedido(modo: str) -> None:
@@ -1410,19 +1528,59 @@ def _wizard_pedido(modo: str) -> None:
         _opts_status = dh.STATUS_TODOS
         _idx_status = _opts_status.index(c["status"]) if c.get("status") in _opts_status else 0
 
+        with st.expander("📄 Importar dados de um PDF (pedido de compra ou contrato)", expanded=False):
+            st.caption(
+                "Sobe um pedido de compra ou contrato/termo aditivo (PDF) e os campos "
+                "abaixo são pré-preenchidos automaticamente — confira e ajuste antes de avançar."
+            )
+            _arquivo_ia = st.file_uploader("Documento (PDF)", type=["pdf"], key="upload_ia_doc")
+            if st.button("✨ Extrair dados", key="btn_extrair_ia", disabled=_arquivo_ia is None):
+                with st.spinner("Lendo o documento..."):
+                    _dados_ia = _extrair_dados_documento_ia(_arquivo_ia.read())
+                if not _dados_ia:
+                    st.error("Não foi possível reconhecer os dados desse documento. Preencha manualmente abaixo.")
+                else:
+                    # Seed direto nas chaves dos widgets (não só em lanc_compra): um
+                    # widget já instanciado ignora `value=` em reruns seguintes — só
+                    # session_state[key] setado ANTES da nova instanciação é confiável
+                    # (mesma lição aprendida no botão "Limpar" da busca).
+                    if _dados_ia.get("fornecedor"):
+                        ss["wiz_fornecedor"] = _dados_ia["fornecedor"]
+                    if _dados_ia.get("req_mxm"):
+                        ss["wiz_req"] = _dados_ia["req_mxm"]
+                    if _dados_ia.get("valor"):
+                        ss["wiz_valor"] = float(_dados_ia["valor"])
+                    if _dados_ia.get("descritivo"):
+                        ss["wiz_descritivo"] = _dados_ia["descritivo"]
+                    if _dados_ia.get("termino_contrato"):
+                        ss["wiz_termino"] = _dados_ia["termino_contrato"]
+                    _obs_partes = []
+                    if _dados_ia.get("numero_contrato"):
+                        _obs_partes.append(_dados_ia["numero_contrato"])
+                    if _dados_ia.get("observacoes"):
+                        _obs_partes.append(_dados_ia["observacoes"])
+                    if _obs_partes:
+                        ss["wiz_obs"] = " · ".join(_obs_partes)
+                    if _dados_ia.get("parcelas"):
+                        ss["lanc_parcelas_extraidas"] = _dados_ia["parcelas"]
+                    _campos_achados = sum(1 for k in ("fornecedor", "valor", "descritivo", "termino_contrato", "numero_contrato") if _dados_ia.get(k))
+                    if not _campos_achados:
+                        st.warning("Nenhum campo reconhecido nesse documento. Preencha manualmente abaixo.")
+                    st.rerun(scope="fragment")
+
         with st.form("form_compra"):
             st.markdown("**1. Dados do Pedido de Compra**")
             col1, col2 = st.columns(2)
             with col1:
-                f_fornecedor = st.text_input("Fornecedor *", value=c.get("fornecedor", ""))
-                f_req        = st.text_input("Req. MXM", value=c.get("req_mxm", ""))
-                f_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f", value=float(c.get("valor", 0.0)))
+                f_fornecedor = st.text_input("Fornecedor *", value=c.get("fornecedor", ""), key="wiz_fornecedor")
+                f_req        = st.text_input("Req. MXM", value=c.get("req_mxm", ""), key="wiz_req")
+                f_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f", value=float(c.get("valor", 0.0)), key="wiz_valor")
                 f_status     = st.selectbox("Status inicial *", options=_opts_status, index=_idx_status)
             with col2:
-                f_descritivo = st.text_input("Descritivo", value=c.get("descritivo", ""))
-                f_termino    = st.date_input("Término do contrato", value=c.get("termino_contrato") or None)
-                f_link       = st.text_input("Link do contrato", value=c.get("link_contrato", ""))
-            f_obs = st.text_area("Observações", height=80, value=c.get("observacoes", ""))
+                f_descritivo = st.text_input("Descritivo", value=c.get("descritivo", ""), key="wiz_descritivo")
+                f_termino    = st.date_input("Término do contrato", value=c.get("termino_contrato") or None, key="wiz_termino")
+                f_link       = st.text_input("Link do contrato", value=c.get("link_contrato", ""), key="wiz_link")
+            f_obs = st.text_area("Observações", height=80, value=c.get("observacoes", ""), key="wiz_obs")
 
             avancar = st.form_submit_button("Avançar para pagamento  →", use_container_width=True)
 
@@ -1440,6 +1598,12 @@ def _wizard_pedido(modo: str) -> None:
                     "link_contrato":    f_link,
                     "observacoes":      f_obs,
                 }
+                _parcelas_ia = ss.pop("lanc_parcelas_extraidas", None)
+                if _parcelas_ia:
+                    ss["lanc_n_parcelas"] = len(_parcelas_ia)
+                    for _i, _p in enumerate(_parcelas_ia):
+                        if _p.get("valor"):
+                            ss[f"np_valor_{_i}"] = float(_p["valor"])
                 ss["lanc_etapa"] = 2
                 st.rerun(scope="fragment")
         return
