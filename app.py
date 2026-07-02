@@ -166,14 +166,16 @@ st.markdown(f"""
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
 /* --- Fonte global --- */
 html, body, [class*="css"] {
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 /* Faces geométricas (ecoam o wordmark da marca, "A" triangulares) */
 .maz-display {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 /* --- Faixa trançada: motivo direto da logo (4 fios cruzando) --- */
@@ -242,7 +244,6 @@ html, body, [class*="css"] {
 }
 .header-divider { width: 1px; height: 46px; background: var(--line); }
 .header-eyebrow {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
     display: block;
     font-size: 0.7rem;
     font-weight: 700;
@@ -252,17 +253,77 @@ html, body, [class*="css"] {
     margin-bottom: 3px;
 }
 .header-title {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--ink);
     margin: 0;
     letter-spacing: 0.01em;
 }
+.header-topbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-left: auto;
+}
+.header-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--paper-deep);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 8px 16px;
+    color: var(--ink-soft);
+    font-size: 0.82rem;
+    min-width: 220px;
+}
+.header-bell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--paper-deep);
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    flex-shrink: 0;
+}
+.header-bell-badge {
+    position: absolute;
+    top: -3px; right: -3px;
+    min-width: 16px; height: 16px;
+    border-radius: 999px;
+    background: var(--urucum);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 3px;
+    border: 2px solid var(--paper);
+}
+.header-avatar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-left: 12px;
+    border-left: 1px solid var(--line);
+}
+.header-avatar {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--folha);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.header-avatar-name { font-size: 0.82rem; font-weight: 700; color: var(--ink); line-height: 1.2; }
+.header-avatar-role { font-size: 0.7rem; color: var(--ink-soft); line-height: 1.2; }
 
 /* --- Seções --- */
 .section-title {
-    font-family: 'Futura', 'Century Gothic', 'Trebuchet MS', sans-serif;
     font-size: 0.82rem;
     font-weight: 700;
     color: var(--ink);
@@ -295,10 +356,19 @@ div[data-testid="stDataFrame"] {
     overflow: hidden;
 }
 
-/* --- Sidebar --- */
+/* --- Sidebar: painel flutuante arredondado (estilo do mockup) --- */
+[data-testid="stAppViewContainer"] {
+    background: var(--paper);
+}
 [data-testid="stSidebar"] {
     background: var(--paper-deep);
-    border-right: 1px solid var(--line);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    margin: 16px 0 16px 16px;
+    height: calc(100vh - 32px);
+    box-shadow: var(--card-shadow);
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 /* --- Upload box --- */
@@ -522,6 +592,7 @@ _ICON_PATHS = {
     "refresh":      '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>',
     "dash":         '<path d="M5 12h14"/>',
     "link":         '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    "search":       '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
 }
 
 
@@ -799,6 +870,28 @@ _PAPEL_DESCRICAO = {
 
 
 # --------------------------------------------------------------------------- #
+# Fonte de dados — carregada aqui (antes do cabeçalho) para que o sininho de   #
+# aprovações pendentes, no topo, já tenha a contagem real disponível.         #
+# Prioridade: 1) Arquivo local (5 dias, editável em Configurações)             #
+#             2) Secrets (valor inicial, antes da 1ª configuração)             #
+#             3) Vazio                                                        #
+# --------------------------------------------------------------------------- #
+_url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
+_aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+_cfg_disk    = _ler_config_persistente()
+
+sheets_url_input = _cfg_disk.get("sheets_url", "") or _url_secrets
+nome_aba_input   = _cfg_disk.get("sheets_aba", "") or _aba_secrets
+
+_n_pendentes_header = 0
+if _papel_usuario == dh.PAPEL_OWNER and sheets_url_input and "gcp_service_account" in st.secrets:
+    try:
+        _n_pendentes_header = dh.contar_pendentes(sheets_url_input)
+    except Exception:
+        _n_pendentes_header = 0
+
+
+# --------------------------------------------------------------------------- #
 # CABEÇALHO PRINCIPAL                                                           #
 # --------------------------------------------------------------------------- #
 
@@ -806,6 +899,14 @@ _logo_header = _logo_data_uri("logo_horizontal.png")
 _logo_html = (
     f'<img src="{_logo_header}" alt="Museu das Amazônias" style="height:52px;width:auto;">'
     if _logo_header else '<div style="font-size:2.2rem;">🏛️</div>'
+)
+_icon_search = svg_icon("search", 15, C["ink_soft"])
+_icon_bell   = svg_icon("bell", 17, C["ink_soft"])
+_avatar_nome = st.session_state.get("nome_usuario") or "?"
+_avatar_iniciais = "".join(p[0] for p in _avatar_nome.split()[:2]).upper() or "?"
+_badge_html = (
+    f'<span class="header-bell-badge">{_n_pendentes_header}</span>'
+    if _n_pendentes_header > 0 else ""
 )
 st.markdown('<div class="maz-trancado"></div>', unsafe_allow_html=True)
 st.markdown(f"""
@@ -816,6 +917,17 @@ st.markdown(f"""
         <span class="header-eyebrow">Gestão de Pagamentos · IDG</span>
         <p class="header-title">Painel Gerencial</p>
     </div>
+    <div class="header-topbar">
+        <div class="header-search">{_icon_search} Buscar pedidos, fornecedores...</div>
+        <div class="header-bell">{_icon_bell}{_badge_html}</div>
+        <div class="header-avatar-wrap">
+            <div class="header-avatar">{_avatar_iniciais}</div>
+            <div>
+                <div class="header-avatar-name">{_avatar_nome}</div>
+                <div class="header-avatar-role">{_PAPEL_LABEL.get(_papel_usuario, _papel_usuario)}</div>
+            </div>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -823,19 +935,6 @@ st.markdown(f"""
 # --------------------------------------------------------------------------- #
 # SIDEBAR — Fonte de dados e filtros interativos                                #
 # --------------------------------------------------------------------------- #
-
-# Prioridade de configuração: 1) Arquivo local (5 dias, editável em Configurações)
-#                              2) Secrets (valor inicial, antes da 1ª configuração)
-#                              3) Vazio
-# Secrets deixou de ser uma trava fixa: agora serve só de ponto de partida,
-# para que trocar a planilha pela tela (ex: alternar entre cópia de teste e
-# produção) tenha efeito de verdade, sem precisar editar Secrets a cada troca.
-_url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
-_aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
-_cfg_disk    = _ler_config_persistente()
-
-sheets_url_input = _cfg_disk.get("sheets_url", "") or _url_secrets
-nome_aba_input   = _cfg_disk.get("sheets_aba", "") or _aba_secrets
 
 with st.sidebar:
 
