@@ -882,7 +882,7 @@ if st.session_state.pop("intro_pendente", False):
             <div style="position:fixed;inset:0;z-index:9999;background:{C['paper']};
                         display:flex;align-items:center;justify-content:center;">
                 <video autoplay muted playsinline
-                       style="max-width:520px;width:60%;height:auto;">
+                       style="max-width:1100px;width:92%;max-height:92vh;height:auto;">
                     <source src="{_video_intro}" type="video/mp4">
                 </video>
             </div>
