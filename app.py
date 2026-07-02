@@ -186,7 +186,7 @@ html, body, [class*="css"] {
     color: var(--ink);
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    margin: 30px 0 14px 0;
+    margin: 52px 0 18px 0;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--line);
 }
@@ -196,7 +196,7 @@ html, body, [class*="css"] {
     background: var(--paper-deep);
     border-radius: 999px;
     height: 8px;
-    margin-top: 8px;
+    margin: 8px 0 16px 0;
     overflow: hidden;
 }
 .progress-bar-fill {
