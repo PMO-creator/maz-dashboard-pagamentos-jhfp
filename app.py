@@ -362,6 +362,80 @@ div[data-testid="stDataFrame"] {
 
 
 # --------------------------------------------------------------------------- #
+# OVERRIDE DO "CHROME" DO STREAMLIT — faz o FUNDO do app, a sidebar e os       #
+# textos/inputs nativos seguirem o tema. Sem isto, só os elementos que nós    #
+# desenhamos (cards) mudam de cor; o fundo e os widgets do próprio Streamlit  #
+# ficariam presos no tema claro do config.toml.                               #
+#                                                                             #
+# Usa as variáveis de tema já definidas em :root, então serve aos dois modos.#
+# `!important` em background é seguro (não definimos fundo inline no app).    #
+# Em `color`, o !important no CONTÊINER não sobrepõe cores inline dos filhos  #
+# (spans coloridos dos cards seguem com sua cor própria) — só define o texto #
+# padrão dos widgets, que era o que ficava ilegível no escuro.               #
+# --------------------------------------------------------------------------- #
+st.markdown("""
+<style>
+/* Fundo geral do app + barra de topo */
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section.main,
+.stApp {
+    background-color: var(--paper) !important;
+}
+[data-testid="stHeader"] {
+    background-color: var(--paper) !important;
+}
+
+/* Sidebar: fundo */
+[data-testid="stSidebar"] {
+    background-color: var(--paper-deep) !important;
+}
+
+/* Texto padrão dos widgets e do corpo (labels, markdown, radio, expander) —
+   no NÍVEL do parágrafo/label, para não sobrepor spans com cor própria
+   (ex: o selo vermelho de pendentes, que tem texto branco inline). */
+[data-testid="stAppViewContainer"] .stMarkdown p,
+[data-testid="stAppViewContainer"] .stMarkdown li,
+[data-testid="stAppViewContainer"] label p,
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] .stMarkdown li,
+[data-testid="stSidebar"] label p,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+div[role="radiogroup"] label p {
+    color: var(--ink) !important;
+}
+
+/* Legendas discretas (st.caption) em tom suave, legível nos dois temas */
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+    color: var(--ink-soft) !important;
+}
+
+/* Campos de entrada seguem o tema (fundo + texto) */
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTextArea"] textarea,
+div[data-baseweb="select"] > div {
+    background-color: var(--surface) !important;
+    color: var(--ink) !important;
+}
+input::placeholder, textarea::placeholder { color: var(--ink-soft) !important; opacity: 0.7; }
+
+/* Expander e caixas de destaque seguem o tema */
+[data-testid="stExpander"] {
+    background-color: var(--surface) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 6px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------- #
 # HELPERS DE FORMATAÇÃO                                                         #
 # --------------------------------------------------------------------------- #
 
