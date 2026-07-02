@@ -1114,7 +1114,7 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
 
 with st.sidebar:
     # Os filtros de fornecedor/situação foram substituídos pela BUSCA em
-    # destaque no topo do Detalhamento de Contratos (mais rápida de usar).
+    # destaque no topo de Acompanhar Pedidos de Compra (mais rápida de usar).
     st.markdown("---")
     st.caption(
         f"**{len(df)}** registros carregados · "
@@ -1791,7 +1791,7 @@ else:
 # SEÇÃO 5 — DETALHAMENTO HIERÁRQUICO (Compras + Pagamentos expansíveis)        #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("📋 Detalhamento de Contratos")
+secao_titulo("📋 Acompanhar Pedidos de Compra")
 
 
 # Cor do TEXTO do badge (versão com bom contraste sobre o fundo do card)
@@ -1972,11 +1972,21 @@ st.markdown(
     f"letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
     unsafe_allow_html=True,
 )
-bc1, bc2, bc3, bc4 = st.columns(4)
+def _limpar_busca_callback() -> None:
+    # Roda ANTES do script recarregar os widgets — só assim dá pra alterar
+    # o valor de um text_input pelo session_state sem o Streamlit reclamar
+    # ("cannot be modified after the widget is instantiated").
+    for _k in ("q_forn", "q_req", "q_serv", "q_nf"):
+        st.session_state[_k] = ""
+
+
+bc1, bc2, bc3, bc4, bc5 = st.columns([1, 1, 1, 1, 0.5])
 q_forn = bc1.text_input("Fornecedor", placeholder="Fornecedor", label_visibility="collapsed", key="q_forn").strip().lower()
 q_req  = bc2.text_input("Requisição", placeholder="Requisição", label_visibility="collapsed", key="q_req").strip().lower()
 q_serv = bc3.text_input("Serviço",    placeholder="Serviço",    label_visibility="collapsed", key="q_serv").strip().lower()
 q_nf   = bc4.text_input("Nº da NF",   placeholder="Nº da NF",   label_visibility="collapsed", key="q_nf").strip().lower()
+with bc5:
+    st.button("🧹 Limpar", use_container_width=True, key="btn_limpar_busca", on_click=_limpar_busca_callback)
 
 # ---- Abas: Em andamento | Quitados ----
 aba_ativa = st.radio(
