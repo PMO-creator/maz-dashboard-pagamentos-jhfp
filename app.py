@@ -1937,71 +1937,73 @@ def _bloco_meus_pedidos():
         )
 
 
-_bloco_novo_lancamento()
-_bloco_solicitar_pedido()
-_bloco_meus_pedidos()
+def _pagina_lancamento():
+    _bloco_novo_lancamento()
+    _bloco_solicitar_pedido()
+    _bloco_meus_pedidos()
 
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 1 — KPI CARDS (visão macro para a diretoria)                           #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("Indicadores Executivos", icone="bar_chart")
+def _secao_indicadores():
+    secao_titulo("Indicadores Executivos", icone="bar_chart")
 
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-with col1:
-    st.markdown(kpi_card(
-        fmt_brl(kpis["orcamento_total"]),
-        sub="Orçamento total contratado",
-        classe="folha", icone=svg_icon("list", cor=C["folha"]),
-    ), unsafe_allow_html=True)
+    with col1:
+        st.markdown(kpi_card(
+            fmt_brl(kpis["orcamento_total"]),
+            sub="Orçamento total contratado",
+            classe="folha", icone=svg_icon("list", cor=C["folha"]),
+        ), unsafe_allow_html=True)
 
-with col2:
-    st.markdown(kpi_card(
-        fmt_brl(kpis["pago"]),
-        sub="Total pago",
-        classe="rio", icone=svg_icon("check_circle", cor=C["rio"]),
-        pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
-    ), unsafe_allow_html=True)
+    with col2:
+        st.markdown(kpi_card(
+            fmt_brl(kpis["pago"]),
+            sub="Total pago",
+            classe="rio", icone=svg_icon("check_circle", cor=C["rio"]),
+            pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
+        ), unsafe_allow_html=True)
 
-with col3:
-    st.markdown(kpi_card(
-        fmt_brl(kpis["a_pagar"]),
-        sub="Saldo a pagar",
-        classe="folha", icone=svg_icon("dollar", cor=C["folha"]),
-        pill_texto="pendente", pill_classe="sol",
-    ), unsafe_allow_html=True)
+    with col3:
+        st.markdown(kpi_card(
+            fmt_brl(kpis["a_pagar"]),
+            sub="Saldo a pagar",
+            classe="folha", icone=svg_icon("dollar", cor=C["folha"]),
+            pill_texto="pendente", pill_classe="sol",
+        ), unsafe_allow_html=True)
 
-with col4:
-    st.markdown(kpi_card(
-        fmt_brl(kpis["em_gargalo"]),
-        sub="Em gargalo · aguardando",
-        classe="sol", icone=svg_icon("clock", cor=C["sol_texto"]),
-        pill_texto="atenção", pill_classe="sol",
-    ), unsafe_allow_html=True)
+    with col4:
+        st.markdown(kpi_card(
+            fmt_brl(kpis["em_gargalo"]),
+            sub="Em gargalo · aguardando",
+            classe="sol", icone=svg_icon("clock", cor=C["sol_texto"]),
+            pill_texto="atenção", pill_classe="sol",
+        ), unsafe_allow_html=True)
 
-with col5:
-    _venc = kpis["vencidos"]
-    _cor_venc = C["urucum"] if _venc > 0 else C["folha"]
-    st.markdown(kpi_card(
-        str(_venc),
-        sub="Contratos vencidos",
-        classe="urucum" if _venc > 0 else "folha", icone=svg_icon("alert_tri", cor=_cor_venc),
-        pill_texto="crítico" if _venc > 0 else "ok",
-        pill_classe="urucum" if _venc > 0 else "folha",
-    ), unsafe_allow_html=True)
+    with col5:
+        _venc = kpis["vencidos"]
+        _cor_venc = C["urucum"] if _venc > 0 else C["folha"]
+        st.markdown(kpi_card(
+            str(_venc),
+            sub="Contratos vencidos",
+            classe="urucum" if _venc > 0 else "folha", icone=svg_icon("alert_tri", cor=_cor_venc),
+            pill_texto="crítico" if _venc > 0 else "ok",
+            pill_classe="urucum" if _venc > 0 else "folha",
+        ), unsafe_allow_html=True)
 
-with col6:
-    st.markdown(kpi_card(
-        f"{kpis['perc_execucao']:.1f}%",
-        sub=f"{kpis['fornecedores']} fornecedores ativos",
-        classe="rio", icone=svg_icon("trend_up", cor=C["rio"]),
-    ), unsafe_allow_html=True)
+    with col6:
+        st.markdown(kpi_card(
+            f"{kpis['perc_execucao']:.1f}%",
+            sub=f"{kpis['fornecedores']} fornecedores ativos",
+            classe="rio", icone=svg_icon("trend_up", cor=C["rio"]),
+        ), unsafe_allow_html=True)
 
-# Barra de progresso da execução orçamentária
-pct = min(kpis["perc_execucao"], 100)
-st.markdown(f"""
+    # Barra de progresso da execução orçamentária
+    pct = min(kpis["perc_execucao"], 100)
+    st.markdown(f"""
 <div class="maz-display" style="margin: 12px 0 4px 0; font-size:0.7rem; color:{C['ink_soft']}; letter-spacing:0.1em; text-transform:uppercase;">
     Execução Orçamentária Global — {pct:.1f}% concluído
 </div>
@@ -2011,85 +2013,86 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-# --------------------------------------------------------------------------- #
+    # --------------------------------------------------------------------------- #
 # SEÇÃO — PRAZOS DE CONTRATOS (visível para todos os papéis)                  #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("Prazos de Contratos", icone="calendar")
+def _secao_prazos():
+    secao_titulo("Prazos de Contratos", icone="calendar")
 
-if "termino_contrato" not in df_compras.columns:
-    st.caption("Coluna de término do contrato não encontrada na planilha.")
-else:
-    with st.expander("🔍 Ver contratos por prazo de vencimento (filtrar e listar)", expanded=False):
-        _MESES_PT = {
-            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
-            7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
-        }
-
-        def _rotulo_mes(periodo: str) -> str:
-            try:
-                ano, mes = periodo.split("-")
-                return f"{_MESES_PT[int(mes)]} {ano}"
-            except Exception:
-                return periodo
-
-        col_faixa, col_mes = st.columns(2)
-        with col_faixa:
-            opcoes_faixa = {
-                f"{dh.EMOJI_PRAZO[k]} {dh.LABEL_PRAZO[k]}": k
-                for k in [dh.PRAZO_VENCIDO, dh.PRAZO_URGENTE, dh.PRAZO_ATENCAO, dh.PRAZO_TRANQUILO, dh.PRAZO_SEM_DATA]
+    if "termino_contrato" not in df_compras.columns:
+        st.caption("Coluna de término do contrato não encontrada na planilha.")
+    else:
+        with st.expander("🔍 Ver contratos por prazo de vencimento (filtrar e listar)", expanded=False):
+            _MESES_PT = {
+                1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+                7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
             }
-            sel_faixa_label = st.multiselect(
-                "Faixa de urgência",
-                options=list(opcoes_faixa.keys()),
-                default=[],
-                placeholder="Todas as faixas",
-            )
-            sel_faixas = [opcoes_faixa[l] for l in sel_faixa_label]
 
-        with col_mes:
-            meses_disponiveis = sorted(
-                [m for m in df_compras["mes_vencimento"].dropna().unique().tolist() if m]
-            )
-            opcoes_mes = {_rotulo_mes(m): m for m in meses_disponiveis}
-            sel_mes_label = st.selectbox(
-                "Mês de vencimento",
-                options=["Todos os meses"] + list(opcoes_mes.keys()),
-            )
-            sel_mes = opcoes_mes.get(sel_mes_label)
+            def _rotulo_mes(periodo: str) -> str:
+                try:
+                    ano, mes = periodo.split("-")
+                    return f"{_MESES_PT[int(mes)]} {ano}"
+                except Exception:
+                    return periodo
 
-        df_prazos = df_compras.copy()
-        if sel_faixas:
-            df_prazos = df_prazos[df_prazos["prazo_status"].isin(sel_faixas)]
-        if sel_mes:
-            df_prazos = df_prazos[df_prazos["mes_vencimento"] == sel_mes]
+            col_faixa, col_mes = st.columns(2)
+            with col_faixa:
+                opcoes_faixa = {
+                    f"{dh.EMOJI_PRAZO[k]} {dh.LABEL_PRAZO[k]}": k
+                    for k in [dh.PRAZO_VENCIDO, dh.PRAZO_URGENTE, dh.PRAZO_ATENCAO, dh.PRAZO_TRANQUILO, dh.PRAZO_SEM_DATA]
+                }
+                sel_faixa_label = st.multiselect(
+                    "Faixa de urgência",
+                    options=list(opcoes_faixa.keys()),
+                    default=[],
+                    placeholder="Todas as faixas",
+                )
+                sel_faixas = [opcoes_faixa[l] for l in sel_faixa_label]
 
-        # Ordena por urgência: vencidos primeiro, depois por proximidade da data
-        _ordem_urgencia = {dh.PRAZO_VENCIDO: 0, dh.PRAZO_URGENTE: 1, dh.PRAZO_ATENCAO: 2, dh.PRAZO_TRANQUILO: 3, dh.PRAZO_SEM_DATA: 4}
-        df_prazos = df_prazos.assign(_ordem=df_prazos["prazo_status"].map(_ordem_urgencia))
-        df_prazos = df_prazos.sort_values(["_ordem", "dias_para_vencer"], na_position="last")
+            with col_mes:
+                meses_disponiveis = sorted(
+                    [m for m in df_compras["mes_vencimento"].dropna().unique().tolist() if m]
+                )
+                opcoes_mes = {_rotulo_mes(m): m for m in meses_disponiveis}
+                sel_mes_label = st.selectbox(
+                    "Mês de vencimento",
+                    options=["Todos os meses"] + list(opcoes_mes.keys()),
+                )
+                sel_mes = opcoes_mes.get(sel_mes_label)
 
-        st.caption(f"**{len(df_prazos)}** contrato(s) encontrados")
+            df_prazos = df_compras.copy()
+            if sel_faixas:
+                df_prazos = df_prazos[df_prazos["prazo_status"].isin(sel_faixas)]
+            if sel_mes:
+                df_prazos = df_prazos[df_prazos["mes_vencimento"] == sel_mes]
 
-        if df_prazos.empty:
-            estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
-        else:
-            _cores_prazo_ativo = dh.cores_prazo(TEMA_ATUAL)
-            for _, linha in df_prazos.iterrows():
-                _ps = str(linha.get("prazo_status", "sem_data"))
-                if _ps not in _cores_prazo_ativo:
-                    _ps = "sem_data"
-                _cor = _cores_prazo_ativo[_ps]
-                _dias = linha.get("dias_para_vencer")
-                if pd.notna(_dias):
-                    _dias = int(_dias)
-                    _dias_txt = f"vence em {_dias} dia(s)" if _dias >= 0 else f"vencido há {abs(_dias)} dia(s)"
-                else:
-                    _dias_txt = "sem data de término"
+            # Ordena por urgência: vencidos primeiro, depois por proximidade da data
+            _ordem_urgencia = {dh.PRAZO_VENCIDO: 0, dh.PRAZO_URGENTE: 1, dh.PRAZO_ATENCAO: 2, dh.PRAZO_TRANQUILO: 3, dh.PRAZO_SEM_DATA: 4}
+            df_prazos = df_prazos.assign(_ordem=df_prazos["prazo_status"].map(_ordem_urgencia))
+            df_prazos = df_prazos.sort_values(["_ordem", "dias_para_vencer"], na_position="last")
 
-                _ic_prazo = svg_icon(_ICON_POR_PRAZO.get(_ps, "dash"), tamanho=14, cor=_cor)
-                st.markdown(
-                    f"""
+            st.caption(f"**{len(df_prazos)}** contrato(s) encontrados")
+
+            if df_prazos.empty:
+                estado_vazio("Nenhum contrato encontrado com os critérios de prazo selecionados.")
+            else:
+                _cores_prazo_ativo = dh.cores_prazo(TEMA_ATUAL)
+                for _, linha in df_prazos.iterrows():
+                    _ps = str(linha.get("prazo_status", "sem_data"))
+                    if _ps not in _cores_prazo_ativo:
+                        _ps = "sem_data"
+                    _cor = _cores_prazo_ativo[_ps]
+                    _dias = linha.get("dias_para_vencer")
+                    if pd.notna(_dias):
+                        _dias = int(_dias)
+                        _dias_txt = f"vence em {_dias} dia(s)" if _dias >= 0 else f"vencido há {abs(_dias)} dia(s)"
+                    else:
+                        _dias_txt = "sem data de término"
+
+                    _ic_prazo = svg_icon(_ICON_POR_PRAZO.get(_ps, "dash"), tamanho=14, cor=_cor)
+                    st.markdown(
+                        f"""
                     <div style="display:flex;align-items:center;gap:12px;background:{C['surface']};
                                 border:1px solid {C['line']};border-left:4px solid {_cor};
                                 border-radius:14px;padding:12px 18px;margin-bottom:8px;
@@ -2110,233 +2113,235 @@ else:
                         </div>
                     </div>
                     """,
-                    unsafe_allow_html=True,
-                )
+                        unsafe_allow_html=True,
+                    )
 
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 2 — PANORAMA GERAL (2 gráficos lado a lado)                            #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("Panorama Geral", icone="grid")
+def _secao_panorama():
+    secao_titulo("Panorama Geral", icone="grid")
 
-col_esq, col_dir = st.columns([1.1, 0.9])
+    col_esq, col_dir = st.columns([1.1, 0.9])
 
-# --- Gráfico 1: Distribuição por Situação do Fluxo (donut chart) ---
-with col_esq, st.container(border=True, key="panel_donut"):
-    if tem_colunas(df_pag, "status", "valor"):
-        contagem_status = df_pag.groupby("status")["valor"].sum().reset_index()
-        contagem_status.columns = ["Status", "Valor"]
-        contagem_status = contagem_status[contagem_status["Valor"] > 0]
-        contagem_status["Grupo"] = contagem_status["Status"].map(
-            lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
-        )
-        # Cor baseada no grupo de saúde
-        cores_mapa = contagem_status["Grupo"].map(dh.cores_grupo(TEMA_ATUAL)).tolist()
+    # --- Gráfico 1: Distribuição por Situação do Fluxo (donut chart) ---
+    with col_esq, st.container(border=True, key="panel_donut"):
+        if tem_colunas(df_pag, "status", "valor"):
+            contagem_status = df_pag.groupby("status")["valor"].sum().reset_index()
+            contagem_status.columns = ["Status", "Valor"]
+            contagem_status = contagem_status[contagem_status["Valor"] > 0]
+            contagem_status["Grupo"] = contagem_status["Status"].map(
+                lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
+            )
+            # Cor baseada no grupo de saúde
+            cores_mapa = contagem_status["Grupo"].map(dh.cores_grupo(TEMA_ATUAL)).tolist()
 
-        fig_donut = px.pie(
-            contagem_status,
-            values="Valor",
-            names="Status",
-            hole=0.58,
-            color_discrete_sequence=cores_mapa,
-            title="Distribuição Financeira por Status",
-        )
-        fig_donut.update_traces(
-            textposition="outside",
-            textinfo="percent+label",
-            hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
-        )
-        fig_donut.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font_color=C['ink'],
-            showlegend=False,
-            title_font_size=13,
-            title_font_color=C['ink_soft'],
-            margin=dict(t=40, b=10, l=10, r=10),
-            annotations=[dict(
-                text=f"<b>{fmt_brl(kpis['a_pagar'])}</b><br><span style='font-size:10px'>a pagar</span>",
-                x=0.5, y=0.5, font_size=12, showarrow=False, font_color=C['folha']
-            )],
-        )
-        st.plotly_chart(fig_donut, use_container_width=True)
+            fig_donut = px.pie(
+                contagem_status,
+                values="Valor",
+                names="Status",
+                hole=0.58,
+                color_discrete_sequence=cores_mapa,
+                title="Distribuição Financeira por Status",
+            )
+            fig_donut.update_traces(
+                textposition="outside",
+                textinfo="percent+label",
+                hovertemplate="<b>%{label}</b><br>R$ %{value:,.2f}<br>%{percent}<extra></extra>",
+            )
+            fig_donut.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color=C['ink'],
+                showlegend=False,
+                title_font_size=13,
+                title_font_color=C['ink_soft'],
+                margin=dict(t=40, b=10, l=10, r=10),
+                annotations=[dict(
+                    text=f"<b>{fmt_brl(kpis['a_pagar'])}</b><br><span style='font-size:10px'>a pagar</span>",
+                    x=0.5, y=0.5, font_size=12, showarrow=False, font_color=C['folha']
+                )],
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
 
-# --- Gráfico 2: Top 10 Fornecedores por Valor Contratado (barras horizontais) ---
-with col_dir, st.container(border=True, key="panel_top10"):
-    if tem_colunas(df_compras, "fornecedor", "valor"):
-        top_fornecedores = (
-            df_compras.groupby("fornecedor")["valor"]
-            .sum()
-            .sort_values(ascending=True)
-            .tail(10)
-            .reset_index()
-        )
-        top_fornecedores.columns = ["Fornecedor", "Valor"]
+    # --- Gráfico 2: Top 10 Fornecedores por Valor Contratado (barras horizontais) ---
+    with col_dir, st.container(border=True, key="panel_top10"):
+        if tem_colunas(df_compras, "fornecedor", "valor"):
+            top_fornecedores = (
+                df_compras.groupby("fornecedor")["valor"]
+                .sum()
+                .sort_values(ascending=True)
+                .tail(10)
+                .reset_index()
+            )
+            top_fornecedores.columns = ["Fornecedor", "Valor"]
 
-        fig_bar = px.bar(
-            top_fornecedores,
-            x="Valor",
-            y="Fornecedor",
-            orientation="h",
-            title="Top 10 Fornecedores · Valor Contratado",
-            color="Valor",
-            color_continuous_scale=[[0, C['bar_scale'][0]], [0.5, C['bar_scale'][1]], [1, C['bar_scale'][2]]],
-            text="Valor",
-        )
-        fig_bar.update_traces(
-            texttemplate="R$ %{x:,.0f}",
-            textposition="outside",
-            hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
-        )
-        fig_bar.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font_color=C['ink'],
-            title_font_size=13,
-            title_font_color=C['ink_soft'],
-            coloraxis_showscale=False,
-            xaxis=dict(showgrid=False, visible=False),
-            yaxis=dict(showgrid=False),
-            margin=dict(t=40, b=10, l=10, r=80),
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+            fig_bar = px.bar(
+                top_fornecedores,
+                x="Valor",
+                y="Fornecedor",
+                orientation="h",
+                title="Top 10 Fornecedores · Valor Contratado",
+                color="Valor",
+                color_continuous_scale=[[0, C['bar_scale'][0]], [0.5, C['bar_scale'][1]], [1, C['bar_scale'][2]]],
+                text="Valor",
+            )
+            fig_bar.update_traces(
+                texttemplate="R$ %{x:,.0f}",
+                textposition="outside",
+                hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+            )
+            fig_bar.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color=C['ink'],
+                title_font_size=13,
+                title_font_color=C['ink_soft'],
+                coloraxis_showscale=False,
+                xaxis=dict(showgrid=False, visible=False),
+                yaxis=dict(showgrid=False),
+                margin=dict(t=40, b=10, l=10, r=80),
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 3 — ANÁLISE DE GARGALOS (foco em tomada de decisão)                    #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("Análise de Gargalos · Pagamentos Bloqueados", icone="alert_tri")
+def _secao_gargalos():
+    secao_titulo("Análise de Gargalos · Pagamentos Bloqueados", icone="alert_tri")
 
-# Status de alerta e em andamento são os gargalos a monitorar
-status_gargalo_lista = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
-df_gargalo = (
-    df_pag[df_pag["status"].isin(status_gargalo_lista)]
-    if "status" in df_pag.columns
-    else pd.DataFrame()
-)
+    # Status de alerta e em andamento são os gargalos a monitorar
+    status_gargalo_lista = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
+    df_gargalo = (
+        df_pag[df_pag["status"].isin(status_gargalo_lista)]
+        if "status" in df_pag.columns
+        else pd.DataFrame()
+    )
 
-if df_gargalo.empty or not tem_colunas(df_gargalo, "status", "valor"):
-    st.success("✅ Nenhum pagamento em situação de gargalo no momento.")
-else:
-    col_g1, col_g2 = st.columns([1.2, 0.8])
+    if df_gargalo.empty or not tem_colunas(df_gargalo, "status", "valor"):
+        st.success("✅ Nenhum pagamento em situação de gargalo no momento.")
+    else:
+        col_g1, col_g2 = st.columns([1.2, 0.8])
 
-    with col_g1, st.container(border=True, key="panel_gargalo_bar"):
-        gargalo_agrupado = (
-            df_gargalo.groupby("status")["valor"]
-            .sum()
-            .sort_values(ascending=False)
-            .reset_index()
-        )
-        gargalo_agrupado.columns = ["Status", "Valor"]
-        gargalo_agrupado["Grupo"] = gargalo_agrupado["Status"].map(
-            lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
-        )
-
-        fig_gargalo = px.bar(
-            gargalo_agrupado,
-            x="Status",
-            y="Valor",
-            title="Valor Parado por Fase de Gargalo",
-            color="Grupo",
-            color_discrete_map=dh.cores_grupo(TEMA_ATUAL),
-            text="Valor",
-        )
-        fig_gargalo.update_traces(
-            texttemplate="R$ %{y:,.0f}",
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
-        )
-        fig_gargalo.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font_color=C['ink'],
-            title_font_size=13,
-            title_font_color=C['ink_soft'],
-            showlegend=False,
-            xaxis=dict(showgrid=False, tickangle=-20),
-            yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
-            margin=dict(t=50, b=60, l=10, r=10),
-        )
-        st.plotly_chart(fig_gargalo, use_container_width=True)
-
-    with col_g2, st.container(border=True, key="panel_gargalo_lista"):
-        if tem_colunas(df_gargalo, "fornecedor", "valor"):
-            st.markdown("**Fornecedores com maior valor bloqueado**")
-            gargalo_forn = (
-                df_gargalo.groupby("fornecedor")["valor"]
+        with col_g1, st.container(border=True, key="panel_gargalo_bar"):
+            gargalo_agrupado = (
+                df_gargalo.groupby("status")["valor"]
                 .sum()
                 .sort_values(ascending=False)
-                .head(8)
                 .reset_index()
             )
-            gargalo_forn.columns = ["Fornecedor", "Valor Bloqueado"]
-            gargalo_forn["Valor Bloqueado"] = gargalo_forn["Valor Bloqueado"].apply(fmt_brl)
-            st.dataframe(gargalo_forn, use_container_width=True, hide_index=True)
+            gargalo_agrupado.columns = ["Status", "Valor"]
+            gargalo_agrupado["Grupo"] = gargalo_agrupado["Status"].map(
+                lambda s: dh.STATUS_PARA_GRUPO.get(s, "alerta")
+            )
+
+            fig_gargalo = px.bar(
+                gargalo_agrupado,
+                x="Status",
+                y="Valor",
+                title="Valor Parado por Fase de Gargalo",
+                color="Grupo",
+                color_discrete_map=dh.cores_grupo(TEMA_ATUAL),
+                text="Valor",
+            )
+            fig_gargalo.update_traces(
+                texttemplate="R$ %{y:,.0f}",
+                textposition="outside",
+                hovertemplate="<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>",
+            )
+            fig_gargalo.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font_color=C['ink'],
+                title_font_size=13,
+                title_font_color=C['ink_soft'],
+                showlegend=False,
+                xaxis=dict(showgrid=False, tickangle=-20),
+                yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
+                margin=dict(t=50, b=60, l=10, r=10),
+            )
+            st.plotly_chart(fig_gargalo, use_container_width=True)
+
+        with col_g2, st.container(border=True, key="panel_gargalo_lista"):
+            if tem_colunas(df_gargalo, "fornecedor", "valor"):
+                st.markdown("**Fornecedores com maior valor bloqueado**")
+                gargalo_forn = (
+                    df_gargalo.groupby("fornecedor")["valor"]
+                    .sum()
+                    .sort_values(ascending=False)
+                    .head(8)
+                    .reset_index()
+                )
+                gargalo_forn.columns = ["Fornecedor", "Valor Bloqueado"]
+                gargalo_forn["Valor Bloqueado"] = gargalo_forn["Valor Bloqueado"].apply(fmt_brl)
+                st.dataframe(gargalo_forn, use_container_width=True, hide_index=True)
 
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 4 — FLUXO TEMPORAL DE PAGAMENTOS                                       #
 # --------------------------------------------------------------------------- #
 
-secao_titulo("Fluxo Temporal de Pagamentos", icone="calendar")
+def _secao_fluxo():
+    secao_titulo("Fluxo Temporal de Pagamentos", icone="calendar")
 
-if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
-    df_tempo = df_pag.dropna(subset=["mes_pgto"])
+    if tem_colunas(df_pag, "mes_pgto", "valor", "status"):
+        df_tempo = df_pag.dropna(subset=["mes_pgto"])
 
-    if not df_tempo.empty:
-        with st.container(border=True, key="panel_fluxo_tempo"):
-            df_tempo["Situacao"] = df_tempo["status"].apply(
-                lambda s: "Realizado" if s == "Pago" else "Previsto"
-            )
-            fluxo = (
-                df_tempo.groupby(["mes_pgto", "Situacao"])["valor"]
-                .sum()
-                .reset_index()
-            )
-            fluxo.columns = ["Mês", "Situação", "Valor"]
-            fluxo = fluxo.sort_values("Mês")
+        if not df_tempo.empty:
+            with st.container(border=True, key="panel_fluxo_tempo"):
+                df_tempo["Situacao"] = df_tempo["status"].apply(
+                    lambda s: "Realizado" if s == "Pago" else "Previsto"
+                )
+                fluxo = (
+                    df_tempo.groupby(["mes_pgto", "Situacao"])["valor"]
+                    .sum()
+                    .reset_index()
+                )
+                fluxo.columns = ["Mês", "Situação", "Valor"]
+                fluxo = fluxo.sort_values("Mês")
 
-            fig_tempo = px.bar(
-                fluxo,
-                x="Mês",
-                y="Valor",
-                color="Situação",
-                barmode="group",
-                title="Pagamentos Realizados vs. Previstos por Mês",
-                color_discrete_map={"Realizado": C['folha'], "Previsto": C['sol']},
-                text="Valor",
-            )
-            fig_tempo.update_traces(
-                texttemplate="R$ %{y:,.0f}",
-                textposition="outside",
-                hovertemplate="<b>%{x}</b> · %{data.name}<br>R$ %{y:,.2f}<extra></extra>",
-            )
-            fig_tempo.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font_color=C['ink'],
-                title_font_size=13,
-                title_font_color=C['ink_soft'],
-                xaxis=dict(showgrid=False),
-                yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(t=60, b=40, l=10, r=10),
-            )
-            st.plotly_chart(fig_tempo, use_container_width=True)
+                fig_tempo = px.bar(
+                    fluxo,
+                    x="Mês",
+                    y="Valor",
+                    color="Situação",
+                    barmode="group",
+                    title="Pagamentos Realizados vs. Previstos por Mês",
+                    color_discrete_map={"Realizado": C['folha'], "Previsto": C['sol']},
+                    text="Valor",
+                )
+                fig_tempo.update_traces(
+                    texttemplate="R$ %{y:,.0f}",
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b> · %{data.name}<br>R$ %{y:,.2f}<extra></extra>",
+                )
+                fig_tempo.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color=C['ink'],
+                    title_font_size=13,
+                    title_font_color=C['ink_soft'],
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=True, gridcolor=C['line'], visible=False),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(t=60, b=40, l=10, r=10),
+                )
+                st.plotly_chart(fig_tempo, use_container_width=True)
+        else:
+            st.info("Não há datas de pagamento registradas para gerar o gráfico temporal.")
     else:
-        st.info("Não há datas de pagamento registradas para gerar o gráfico temporal.")
-else:
-    st.info("Coluna 'Data pgto' não encontrada ou sem dados de pagamento.")
+        st.info("Coluna 'Data pgto' não encontrada ou sem dados de pagamento.")
 
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 5 — DETALHAMENTO HIERÁRQUICO (Compras + Pagamentos expansíveis)        #
+# O título e o corpo de renderização ficam em _secao_acompanhar() (mais abaixo);#
+# aqui em nível de módulo ficam só os helpers e os diálogos de edição.         #
 # --------------------------------------------------------------------------- #
-
-secao_titulo("Acompanhar Pedidos de Compra", icone="file_text")
-
 
 # Cor do TEXTO do badge (versão com bom contraste sobre o fundo do card)
 _COR_TEXTO_BADGE = {
@@ -2497,193 +2502,197 @@ def _dialog_nova_parcela(gi: int) -> None:
             _fechar_dialog_e_atualizar()
 
 
-# Mensagem de sucesso após uma ação de edição (sobrevive ao rerun do diálogo)
-_flash = st.session_state.pop("flash_ok", None)
-if _flash:
-    st.success(f"✅ {_flash}")
-
-# Avisos não-críticos (ex: falha ao copiar formatação visual) — não impedem
-# o lançamento, mas precisam aparecer pra gente conseguir diagnosticar.
-_flash_avisos = st.session_state.pop("flash_avisos", None)
-if _flash_avisos:
-    for _av in _flash_avisos:
-        st.warning(f"⚠️ {_av}")
-
-
-# ---- Busca: caixas separadas, uma por campo ----
-st.markdown(
-    "<span class='maz-display' style='font-size:0.72rem;font-weight:700;"
-    f"letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
-    unsafe_allow_html=True,
-)
-def _limpar_busca_callback() -> None:
-    # Roda ANTES do script recarregar os widgets — só assim dá pra alterar
-    # o valor de um text_input pelo session_state sem o Streamlit reclamar
-    # ("cannot be modified after the widget is instantiated").
-    for _k in ("q_forn", "q_req", "q_serv", "q_nf"):
-        st.session_state[_k] = ""
+def _mostrar_flash():
+    """Mensagens de sucesso/aviso após ações — mostradas em qualquer página,
+    já que a ação pode ter sido feita numa página diferente da atual."""
+    _flash = st.session_state.pop("flash_ok", None)
+    if _flash:
+        st.success(f"✅ {_flash}")
+    # Avisos não-críticos (ex: falha ao copiar formatação visual) — não impedem
+    # o lançamento, mas precisam aparecer pra gente conseguir diagnosticar.
+    _flash_avisos = st.session_state.pop("flash_avisos", None)
+    if _flash_avisos:
+        for _av in _flash_avisos:
+            st.warning(f"⚠️ {_av}")
 
 
-bc1, bc2, bc3, bc4, bc5 = st.columns([1, 1, 1, 1, 0.5])
-q_forn = bc1.text_input("Fornecedor", placeholder="Fornecedor", label_visibility="collapsed", key="q_forn").strip().lower()
-q_req  = bc2.text_input("Requisição", placeholder="Requisição", label_visibility="collapsed", key="q_req").strip().lower()
-q_serv = bc3.text_input("Serviço",    placeholder="Serviço",    label_visibility="collapsed", key="q_serv").strip().lower()
-q_nf   = bc4.text_input("Nº da NF",   placeholder="Nº da NF",   label_visibility="collapsed", key="q_nf").strip().lower()
-with bc5:
-    st.button("🧹 Limpar", use_container_width=True, key="btn_limpar_busca", on_click=_limpar_busca_callback)
+def _secao_acompanhar():
+    secao_titulo("Acompanhar Pedidos de Compra", icone="file_text")
 
-# ---- Abas: Em andamento | Quitados ----
-aba_ativa = st.radio(
-    "",
-    options=["🔄  Em Andamento", "✅  Quitados"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-mostrar_quitados = aba_ativa.startswith("✅")
-
-
-def _eh_quitado(compra) -> bool:
-    status = str(compra.get("status", ""))
-    grupo  = str(compra.get("grupo_status", ""))
-    return status in dh.STATUS_QUITADO or grupo == "concluido"
+    # ---- Busca: caixas separadas, uma por campo ----
+    st.markdown(
+        "<span class='maz-display' style='font-size:0.72rem;font-weight:700;"
+        f"letter-spacing:0.14em;text-transform:uppercase;color:{C['ink_soft']};'>Buscar por</span>",
+        unsafe_allow_html=True,
+    )
+    def _limpar_busca_callback() -> None:
+        # Roda ANTES do script recarregar os widgets — só assim dá pra alterar
+        # o valor de um text_input pelo session_state sem o Streamlit reclamar
+        # ("cannot be modified after the widget is instantiated").
+        for _k in ("q_forn", "q_req", "q_serv", "q_nf"):
+            st.session_state[_k] = ""
 
 
-def _passa_busca(compra, pags) -> bool:
-    """Cada caixa preenchida filtra o seu campo (lógica E entre as caixas)."""
-    if q_forn and q_forn not in str(compra.get("fornecedor", "")).lower():
-        return False
-    if q_req:
-        reqs = [str(compra.get("req_mxm", ""))] + [str(p.get("req_mxm", "")) for _, p in pags.iterrows()]
-        if q_req not in " ".join(reqs).lower():
+    bc1, bc2, bc3, bc4, bc5 = st.columns([1, 1, 1, 1, 0.5])
+    q_forn = bc1.text_input("Fornecedor", placeholder="Fornecedor", label_visibility="collapsed", key="q_forn").strip().lower()
+    q_req  = bc2.text_input("Requisição", placeholder="Requisição", label_visibility="collapsed", key="q_req").strip().lower()
+    q_serv = bc3.text_input("Serviço",    placeholder="Serviço",    label_visibility="collapsed", key="q_serv").strip().lower()
+    q_nf   = bc4.text_input("Nº da NF",   placeholder="Nº da NF",   label_visibility="collapsed", key="q_nf").strip().lower()
+    with bc5:
+        st.button("🧹 Limpar", use_container_width=True, key="btn_limpar_busca", on_click=_limpar_busca_callback)
+
+    # ---- Abas: Em andamento | Quitados ----
+    aba_ativa = st.radio(
+        "",
+        options=["🔄  Em Andamento", "✅  Quitados"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    mostrar_quitados = aba_ativa.startswith("✅")
+
+
+    def _eh_quitado(compra) -> bool:
+        status = str(compra.get("status", ""))
+        grupo  = str(compra.get("grupo_status", ""))
+        return status in dh.STATUS_QUITADO or grupo == "concluido"
+
+
+    def _passa_busca(compra, pags) -> bool:
+        """Cada caixa preenchida filtra o seu campo (lógica E entre as caixas)."""
+        if q_forn and q_forn not in str(compra.get("fornecedor", "")).lower():
             return False
-    if q_serv:
-        servs = [str(compra.get("descritivo", ""))] + [str(p.get("descritivo", "")) for _, p in pags.iterrows()]
-        if q_serv not in " ".join(servs).lower():
-            return False
-    if q_nf:
-        docs = " ".join(str(p.get("doc_fiscal", "")) for _, p in pags.iterrows())
-        if q_nf not in docs.lower():
-            return False
-    return True
+        if q_req:
+            reqs = [str(compra.get("req_mxm", ""))] + [str(p.get("req_mxm", "")) for _, p in pags.iterrows()]
+            if q_req not in " ".join(reqs).lower():
+                return False
+        if q_serv:
+            servs = [str(compra.get("descritivo", ""))] + [str(p.get("descritivo", "")) for _, p in pags.iterrows()]
+            if q_serv not in " ".join(servs).lower():
+                return False
+        if q_nf:
+            docs = " ".join(str(p.get("doc_fiscal", "")) for _, p in pags.iterrows())
+            if q_nf not in docs.lower():
+                return False
+        return True
 
 
-# Hierarquia sobre a base COMPLETA — o índice (gi) é a posição absoluta do
-# grupo na planilha, usada para localizar a linha exata na edição/exclusão.
-hier_full = dh.agrupar_hierarquia(df)
+    # Hierarquia sobre a base COMPLETA — o índice (gi) é a posição absoluta do
+    # grupo na planilha, usada para localizar a linha exata na edição/exclusão.
+    hier_full = dh.agrupar_hierarquia(df)
 
-_algum_filtro = any((q_forn, q_req, q_serv, q_nf))
+    _algum_filtro = any((q_forn, q_req, q_serv, q_nf))
 
-itens = []
-for gi, (compra, df_pags) in enumerate(hier_full):
-    if _eh_quitado(compra) != mostrar_quitados:
-        continue
-    if not _passa_busca(compra, df_pags):
-        continue
-    itens.append((gi, compra, df_pags))
+    itens = []
+    for gi, (compra, df_pags) in enumerate(hier_full):
+        if _eh_quitado(compra) != mostrar_quitados:
+            continue
+        if not _passa_busca(compra, df_pags):
+            continue
+        itens.append((gi, compra, df_pags))
 
-# Abre o diálogo de edição, se houver um alvo selecionado
-_alvo = st.session_state.get("edit_target")
-if _alvo and _pode_editar and _escrita_ok:
-    _tipo, _gi = _alvo[0], _alvo[1]
-    if _gi < len(hier_full):
-        _compra_a, _pags_a = hier_full[_gi]
-        if _tipo == "pedido":
-            _dialog_pedido(_gi, _compra_a)
-        elif _tipo == "parcela":
-            _pi = _alvo[2]
-            if _pi < len(_pags_a):
-                _dialog_parcela(_gi, _pi, _pags_a.iloc[_pi])
-            else:
-                st.session_state.pop("edit_target", None)
-        elif _tipo == "nova_parcela":
-            _dialog_nova_parcela(_gi)
-    else:
-        st.session_state.pop("edit_target", None)
-
-# Indicador de resultado
-st.caption(
-    f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: "
-    f"**{len(itens)}**" + (" · filtro ativo" if _algum_filtro else "")
-)
-
-if not itens:
-    estado_vazio("Nenhum contrato encontrado com os critérios atuais.")
-else:
-    for gi, compra, df_pags in itens:
-
-        # --- Dados principais da Compra ---
-        fornecedor  = _fmt(compra.get("fornecedor"))
-        valor       = _fmt(compra.get("valor"), "valor")
-        descritivo  = _fmt(compra.get("descritivo"))
-        termino     = _fmt(compra.get("termino_contrato"), "data")
-        observacoes = _fmt(compra.get("observacoes"))
-
-        # Requisição: mostra o número (col C) ou um aviso quando ausente
-        req_val = _val_txt(compra.get("req_mxm"))
-        if req_val:
-            req_html = (
-                f"<span style=\"color:{C['ink_soft']};font-size:0.74rem;margin-left:10px;"
-                f"letter-spacing:0.03em;\">Req. {html.escape(req_val)}</span>"
-            )
+    # Abre o diálogo de edição, se houver um alvo selecionado
+    _alvo = st.session_state.get("edit_target")
+    if _alvo and _pode_editar and _escrita_ok:
+        _tipo, _gi = _alvo[0], _alvo[1]
+        if _gi < len(hier_full):
+            _compra_a, _pags_a = hier_full[_gi]
+            if _tipo == "pedido":
+                _dialog_pedido(_gi, _compra_a)
+            elif _tipo == "parcela":
+                _pi = _alvo[2]
+                if _pi < len(_pags_a):
+                    _dialog_parcela(_gi, _pi, _pags_a.iloc[_pi])
+                else:
+                    st.session_state.pop("edit_target", None)
+            elif _tipo == "nova_parcela":
+                _dialog_nova_parcela(_gi)
         else:
-            req_html = (
-                f"<span style=\"background:{C['sol']}1A;border:1px solid {C['sol']}99;"
-                f"color:{C['sol_texto']};font-size:0.6rem;font-weight:700;letter-spacing:0.04em;"
-                "text-transform:uppercase;padding:2px 8px;border-radius:999px;"
-                "margin-left:10px;\">⚠ sem requisição</span>"
-            )
+            st.session_state.pop("edit_target", None)
 
-        status_raw = str(compra.get("status", ""))
-        status     = "Sem status" if status_raw in ("nan", "", "None") else status_raw
-        grupo      = str(compra.get("grupo_status", "alerta"))
-        if grupo in ("nan", "", "None"):
-            grupo = "alerta"
+    # Indicador de resultado
+    st.caption(
+        f"{'✅ Contratos quitados' if mostrar_quitados else '🔄 Contratos em andamento'}: "
+        f"**{len(itens)}**" + (" · filtro ativo" if _algum_filtro else "")
+    )
 
-        n_parcelas   = len(df_pags) if not df_pags.empty else 0
-        label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
+    if not itens:
+        estado_vazio("Nenhum contrato encontrado com os critérios atuais.")
+    else:
+        for gi, compra, df_pags in itens:
 
-        detalhes_parts = [descritivo] if descritivo != "—" else []
-        if observacoes != "—":
-            detalhes_parts.append(observacoes)
-        detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
+            # --- Dados principais da Compra ---
+            fornecedor  = _fmt(compra.get("fornecedor"))
+            valor       = _fmt(compra.get("valor"), "valor")
+            descritivo  = _fmt(compra.get("descritivo"))
+            termino     = _fmt(compra.get("termino_contrato"), "data")
+            observacoes = _fmt(compra.get("observacoes"))
 
-        badge = _status_badge(status, grupo)
-        cor_spine = dh.cores_grupo(TEMA_ATUAL).get(grupo, C["ink_soft"])
-
-        # --- Selo de prazo: código/link do contrato + término + urgência ---
-        prazo_status = str(compra.get("prazo_status", "sem_data"))
-        _cores_prazo_ativo2 = dh.cores_prazo(TEMA_ATUAL)
-        if prazo_status not in _cores_prazo_ativo2:
-            prazo_status = "sem_data"
-        cor_prazo   = _cores_prazo_ativo2[prazo_status]
-        icone_prazo = svg_icon(_ICON_POR_PRAZO.get(prazo_status, "dash"), tamanho=13, cor=cor_prazo)
-        label_prazo = dh.LABEL_PRAZO[prazo_status]
-
-        link_val = _val_txt(compra.get("link_contrato"))
-        partes_prazo = []
-        if link_val:
-            if link_val.lower().startswith("http"):
-                partes_prazo.append(
-                    f'<a href="{html.escape(link_val)}" target="_blank" '
-                    f'style="color:inherit;text-decoration:underline;display:inline-flex;'
-                    f'align-items:center;gap:4px;">{svg_icon("link", tamanho=13, cor=cor_prazo)} Contrato</a>'
+            # Requisição: mostra o número (col C) ou um aviso quando ausente
+            req_val = _val_txt(compra.get("req_mxm"))
+            if req_val:
+                req_html = (
+                    f"<span style=\"color:{C['ink_soft']};font-size:0.74rem;margin-left:10px;"
+                    f"letter-spacing:0.03em;\">Req. {html.escape(req_val)}</span>"
                 )
             else:
-                partes_prazo.append(f'{svg_icon("file_text", tamanho=13, cor=cor_prazo)} {html.escape(link_val)}')
-        if termino != "—":
-            partes_prazo.append(f'{svg_icon("calendar", tamanho=13, cor=cor_prazo)} Término: {termino}')
-        partes_prazo.append(f"{icone_prazo} {label_prazo}")
+                req_html = (
+                    f"<span style=\"background:{C['sol']}1A;border:1px solid {C['sol']}99;"
+                    f"color:{C['sol_texto']};font-size:0.6rem;font-weight:700;letter-spacing:0.04em;"
+                    "text-transform:uppercase;padding:2px 8px;border-radius:999px;"
+                    "margin-left:10px;\">⚠ sem requisição</span>"
+                )
 
-        prazo_chip_html = (
-            f'<span style="display:inline-flex;align-items:center;flex-wrap:wrap;'
-            f'gap:6px;background:{cor_prazo}14;border:1px solid {cor_prazo}66;'
-            f'color:{cor_prazo};font-size:0.7rem;font-weight:600;padding:4px 10px;'
-            f'border-radius:6px;margin-top:8px;">'
-            + " &nbsp;·&nbsp; ".join(partes_prazo) +
-            "</span>"
-        )
+            status_raw = str(compra.get("status", ""))
+            status     = "Sem status" if status_raw in ("nan", "", "None") else status_raw
+            grupo      = str(compra.get("grupo_status", "alerta"))
+            if grupo in ("nan", "", "None"):
+                grupo = "alerta"
 
-        card_html = f"""
+            n_parcelas   = len(df_pags) if not df_pags.empty else 0
+            label_expand = f"  ({n_parcelas} pagamento{'s' if n_parcelas != 1 else ''})" if n_parcelas > 0 else ""
+
+            detalhes_parts = [descritivo] if descritivo != "—" else []
+            if observacoes != "—":
+                detalhes_parts.append(observacoes)
+            detalhes_html = " &nbsp;·&nbsp; ".join(detalhes_parts)
+
+            badge = _status_badge(status, grupo)
+            cor_spine = dh.cores_grupo(TEMA_ATUAL).get(grupo, C["ink_soft"])
+
+            # --- Selo de prazo: código/link do contrato + término + urgência ---
+            prazo_status = str(compra.get("prazo_status", "sem_data"))
+            _cores_prazo_ativo2 = dh.cores_prazo(TEMA_ATUAL)
+            if prazo_status not in _cores_prazo_ativo2:
+                prazo_status = "sem_data"
+            cor_prazo   = _cores_prazo_ativo2[prazo_status]
+            icone_prazo = svg_icon(_ICON_POR_PRAZO.get(prazo_status, "dash"), tamanho=13, cor=cor_prazo)
+            label_prazo = dh.LABEL_PRAZO[prazo_status]
+
+            link_val = _val_txt(compra.get("link_contrato"))
+            partes_prazo = []
+            if link_val:
+                if link_val.lower().startswith("http"):
+                    partes_prazo.append(
+                        f'<a href="{html.escape(link_val)}" target="_blank" '
+                        f'style="color:inherit;text-decoration:underline;display:inline-flex;'
+                        f'align-items:center;gap:4px;">{svg_icon("link", tamanho=13, cor=cor_prazo)} Contrato</a>'
+                    )
+                else:
+                    partes_prazo.append(f'{svg_icon("file_text", tamanho=13, cor=cor_prazo)} {html.escape(link_val)}')
+            if termino != "—":
+                partes_prazo.append(f'{svg_icon("calendar", tamanho=13, cor=cor_prazo)} Término: {termino}')
+            partes_prazo.append(f"{icone_prazo} {label_prazo}")
+
+            prazo_chip_html = (
+                f'<span style="display:inline-flex;align-items:center;flex-wrap:wrap;'
+                f'gap:6px;background:{cor_prazo}14;border:1px solid {cor_prazo}66;'
+                f'color:{cor_prazo};font-size:0.7rem;font-weight:600;padding:4px 10px;'
+                f'border-radius:6px;margin-top:8px;">'
+                + " &nbsp;·&nbsp; ".join(partes_prazo) +
+                "</span>"
+            )
+
+            card_html = f"""
             <div style="
                 background:{C['surface']};border:1px solid {C['line']};border-radius:14px;
                 margin-bottom:10px;font-family:sans-serif;display:flex;overflow:hidden;
@@ -2707,51 +2716,88 @@ else:
             </div>
         """
 
-        # Card + botão de editar pedido (só Owner/Admin com escrita habilitada)
-        if _pode_editar and _escrita_ok:
-            c_card, c_edit = st.columns([24, 1])
-            c_card.html(card_html)
-            if c_edit.button("✏️", key=f"edped_{gi}", help="Editar pedido de compra"):
-                st.session_state["edit_target"] = ("pedido", gi)
-                st.rerun()
-        else:
-            st.html(card_html)
-
-        # --- Expansor de pagamentos/parcelas ---
-        with st.expander(f"＋ Ver pagamentos / parcelas{label_expand}", expanded=False):
-            if n_parcelas > 0:
-                for pi in range(len(df_pags)):
-                    prow = df_pags.iloc[pi]
-                    p_grupo = str(prow.get("grupo_status", "alerta"))
-                    p_desc  = _val_txt(prow.get("descritivo")) or "—"
-                    p_stat  = _val_txt(prow.get("status")) or "Sem status"
-                    cols = st.columns([3, 2, 2, 2, 1]) if (_pode_editar and _escrita_ok) else st.columns([3, 2, 2, 3])
-                    _ic_grupo = svg_icon(_ICON_POR_GRUPO.get(p_grupo, "dash"), tamanho=13, cor=dh.cores_grupo(TEMA_ATUAL).get(p_grupo, C["ink_soft"]))
-                    cols[0].markdown(f"**{p_desc}**  \n{_ic_grupo} <span style='font-size:0.75rem;color:{C['ink_soft']};'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
-                    cols[1].markdown(f"<span style='font-size:0.85rem;'>{_fmt(prow.get('valor'), 'valor')}</span>", unsafe_allow_html=True)
-                    cols[2].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
-                    cols[3].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
-                    if _pode_editar and _escrita_ok:
-                        if cols[4].button("✏️", key=f"edpar_{gi}_{pi}", help="Editar parcela"):
-                            st.session_state["edit_target"] = ("parcela", gi, pi)
-                            st.rerun()
-                    st.markdown(f"<hr style='margin:4px 0;border:none;border-top:1px solid {C['line']};'>", unsafe_allow_html=True)
-            else:
-                st.caption("Nenhuma parcela lançada para este pedido.")
-
+            # Card + botão de editar pedido (só Owner/Admin com escrita habilitada)
             if _pode_editar and _escrita_ok:
-                if st.button("➕ Adicionar parcela", key=f"addpar_{gi}", use_container_width=True):
-                    st.session_state["edit_target"] = ("nova_parcela", gi)
+                c_card, c_edit = st.columns([24, 1])
+                c_card.html(card_html)
+                if c_edit.button("✏️", key=f"edped_{gi}", help="Editar pedido de compra"):
+                    st.session_state["edit_target"] = ("pedido", gi)
                     st.rerun()
+            else:
+                st.html(card_html)
 
-# Botão de exportação
-csv_export = df_filtrado.to_csv(index=False, encoding="utf-8-sig")
-st.download_button(
-    label="⬇️  Exportar dados (.csv)",
-    data=csv_export,
-    file_name="maz_pagamentos.csv",
-    mime="text/csv",
-)
+            # --- Expansor de pagamentos/parcelas ---
+            with st.expander(f"＋ Ver pagamentos / parcelas{label_expand}", expanded=False):
+                if n_parcelas > 0:
+                    for pi in range(len(df_pags)):
+                        prow = df_pags.iloc[pi]
+                        p_grupo = str(prow.get("grupo_status", "alerta"))
+                        p_desc  = _val_txt(prow.get("descritivo")) or "—"
+                        p_stat  = _val_txt(prow.get("status")) or "Sem status"
+                        cols = st.columns([3, 2, 2, 2, 1]) if (_pode_editar and _escrita_ok) else st.columns([3, 2, 2, 3])
+                        _ic_grupo = svg_icon(_ICON_POR_GRUPO.get(p_grupo, "dash"), tamanho=13, cor=dh.cores_grupo(TEMA_ATUAL).get(p_grupo, C["ink_soft"]))
+                        cols[0].markdown(f"**{p_desc}**  \n{_ic_grupo} <span style='font-size:0.75rem;color:{C['ink_soft']};'>{html.escape(p_stat)}</span>", unsafe_allow_html=True)
+                        cols[1].markdown(f"<span style='font-size:0.85rem;'>{_fmt(prow.get('valor'), 'valor')}</span>", unsafe_allow_html=True)
+                        cols[2].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>{_fmt(prow.get('data_pgto'), 'data')}</span>", unsafe_allow_html=True)
+                        cols[3].markdown(f"<span style='font-size:0.85rem;color:{C['ink_soft']};'>NF {_val_txt(prow.get('doc_fiscal')) or '—'}</span>", unsafe_allow_html=True)
+                        if _pode_editar and _escrita_ok:
+                            if cols[4].button("✏️", key=f"edpar_{gi}_{pi}", help="Editar parcela"):
+                                st.session_state["edit_target"] = ("parcela", gi, pi)
+                                st.rerun()
+                        st.markdown(f"<hr style='margin:4px 0;border:none;border-top:1px solid {C['line']};'>", unsafe_allow_html=True)
+                else:
+                    st.caption("Nenhuma parcela lançada para este pedido.")
+
+                if _pode_editar and _escrita_ok:
+                    if st.button("➕ Adicionar parcela", key=f"addpar_{gi}", use_container_width=True):
+                        st.session_state["edit_target"] = ("nova_parcela", gi)
+                        st.rerun()
+
+    # Botão de exportação
+    csv_export = df_filtrado.to_csv(index=False, encoding="utf-8-sig")
+    st.download_button(
+        label="⬇️  Exportar dados (.csv)",
+        data=csv_export,
+        file_name="maz_pagamentos.csv",
+        mime="text/csv",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# NAVEGAÇÃO MULTIPÁGINA — cada página é uma função; o menu vai para a sidebar   #
+# --------------------------------------------------------------------------- #
+
+def _pagina_painel():
+    _secao_indicadores()
+    _secao_panorama()
+    _secao_gargalos()
+    _secao_fluxo()
+
+
+def _pagina_prazos():
+    _secao_prazos()
+
+
+def _pagina_contratos():
+    _secao_acompanhar()
+
+
+_paginas_menu = [
+    st.Page(_pagina_painel,    title="Painel Gerencial",     icon=":material/dashboard:", default=True),
+    st.Page(_pagina_prazos,    title="Prazos de Contratos",  icon=":material/event:"),
+    st.Page(_pagina_contratos, title="Contratos",            icon=":material/description:"),
+]
+
+# "Novo Lançamento" só aparece para quem pode lançar ou solicitar (não Viewer)
+_estrutura_nav = {"Menu": _paginas_menu}
+if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN, dh.PAPEL_REQUISITANTE):
+    _estrutura_nav["Fluxo"] = [
+        st.Page(_pagina_lancamento, title="Novo Lançamento", icon=":material/add_circle:"),
+    ]
+
+_mostrar_flash()
+_nav = st.navigation(_estrutura_nav)
+_nav.run()
 
 
 # --------------------------------------------------------------------------- #
