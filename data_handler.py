@@ -1290,6 +1290,15 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
     # KPI 7 — Percentual de execução orçamentária
     perc_execucao = (pago / orcamento_total * 100) if orcamento_total > 0 else 0
 
+    # KPI 8 — Contratos a vencer em até 30 dias (valor e contagem)
+    if "prazo_status" in df_compras.columns:
+        _urgentes = df_compras[df_compras["prazo_status"] == PRAZO_URGENTE]
+        a_vencer_30d = _urgentes["valor"].sum() if "valor" in _urgentes.columns else 0
+        n_a_vencer_30d = len(_urgentes)
+    else:
+        a_vencer_30d = 0
+        n_a_vencer_30d = 0
+
     return {
         "orcamento_total":  orcamento_total,
         "pago":             pago,
@@ -1298,6 +1307,8 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
         "vencidos":         vencidos,
         "fornecedores":     fornecedores,
         "perc_execucao":    perc_execucao,
+        "a_vencer_30d":     a_vencer_30d,
+        "n_a_vencer_30d":   n_a_vencer_30d,
     }
 
 

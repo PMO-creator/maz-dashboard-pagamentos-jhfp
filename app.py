@@ -563,6 +563,23 @@ def fmt_brl(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def fmt_brl_curto(valor: float) -> str:
+    """Versão compacta para os KPIs: R$ 15,1 mi · R$ 320 mil · R$ 850,00.
+    O valor exato completo continua disponível no tooltip do card."""
+    try:
+        v = float(valor or 0)
+    except (TypeError, ValueError):
+        return "R$ 0"
+    n = abs(v)
+    if n >= 1_000_000:
+        txt = f"R$ {v/1_000_000:.1f} mi"
+    elif n >= 1_000:
+        txt = f"R$ {v/1_000:.0f} mil"
+    else:
+        return fmt_brl(v)
+    return txt.replace(".", ",")
+
+
 def tem_colunas(df: pd.DataFrame, *colunas) -> bool:
     """Verifica se TODAS as colunas listadas existem no dataframe."""
     return all(c in df.columns for c in colunas)
@@ -784,25 +801,28 @@ def secao_titulo(texto: str, icone: str = "dash") -> None:
 
 
 def kpi_card(valor: str, sub: str = "", classe: str = "folha",
-             icone: str = "", pill_texto: str = "", pill_classe: str = "") -> str:
+             icone: str = "", pill_texto: str = "", pill_classe: str = "",
+             titulo: str = "") -> str:
     """
     Card de KPI no estilo SaaS: chip de ícone (cor da marca) + pílula de
     variação/estado no topo, número grande e rótulo abaixo.
     `classe`/`pill_classe` ∈ {folha, rio, sol, urucum}.
     `icone` é HTML pronto — normalmente o retorno de svg_icon(). `sub` é o
-    rótulo descritivo sob o número.
+    rótulo descritivo sob o número. `titulo` vira o tooltip do número
+    (usado para mostrar o valor exato quando o card exibe o valor abreviado).
     """
     classe = classe or "folha"
     chip = f'<div class="kpi-chip {classe}">{icone}</div>'
     pill = f'<span class="kpi-pill {pill_classe or classe}">{html.escape(pill_texto)}</span>' if pill_texto else ""
     sub_html = f'<div class="kpi-label">{html.escape(sub)}</div>' if sub else ""
+    title_attr = f' title="{html.escape(titulo)}"' if titulo else ""
     # HTML em uma única linha lógica, SEM linhas em branco internas — uma
     # linha em branco faria o st.markdown encerrar o bloco HTML e renderizar
     # o resto como texto (bug já observado com pílula vazia).
     return (
         '<div class="kpi-card">'
         f'<div class="kpi-top">{chip}{pill}</div>'
-        f'<div class="kpi-value">{valor}</div>'
+        f'<div class="kpi-value"{title_attr}>{valor}</div>'
         f'{sub_html}'
         '</div>'
     )
@@ -1795,40 +1815,56 @@ def _pagina_lancamento():
 def _secao_indicadores():
     secao_titulo("Indicadores Executivos", icone="bar_chart")
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-
-    with col1:
+    # Valores exibidos abreviados (R$ 15,1 mi); o valor exato fica no tooltip.
+    _row1 = st.columns(4)
+    with _row1[0]:
         st.markdown(kpi_card(
-            fmt_brl(kpis["orcamento_total"]),
+            fmt_brl_curto(kpis["orcamento_total"]),
             sub="Orçamento total contratado",
             classe="folha", icone=svg_icon("list", cor=C["folha"]),
+            titulo=fmt_brl(kpis["orcamento_total"]),
         ), unsafe_allow_html=True)
 
-    with col2:
+    with _row1[1]:
         st.markdown(kpi_card(
-            fmt_brl(kpis["pago"]),
+            fmt_brl_curto(kpis["pago"]),
             sub="Total pago",
             classe="rio", icone=svg_icon("check_circle", cor=C["rio"]),
             pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
+            titulo=fmt_brl(kpis["pago"]),
         ), unsafe_allow_html=True)
 
-    with col3:
+    with _row1[2]:
         st.markdown(kpi_card(
-            fmt_brl(kpis["a_pagar"]),
+            fmt_brl_curto(kpis["a_pagar"]),
             sub="Saldo a pagar",
             classe="folha", icone=svg_icon("dollar", cor=C["folha"]),
             pill_texto="pendente", pill_classe="sol",
+            titulo=fmt_brl(kpis["a_pagar"]),
         ), unsafe_allow_html=True)
 
-    with col4:
+    with _row1[3]:
+        _nv30 = kpis["n_a_vencer_30d"]
         st.markdown(kpi_card(
-            fmt_brl(kpis["em_gargalo"]),
+            fmt_brl_curto(kpis["a_vencer_30d"]),
+            sub="A vencer em até 30 dias",
+            classe="sol", icone=svg_icon("calendar", cor=C["sol_texto"]),
+            pill_texto=(f"{_nv30} contrato{'s' if _nv30 != 1 else ''}" if _nv30 else "nenhum"),
+            pill_classe="sol",
+            titulo=fmt_brl(kpis["a_vencer_30d"]),
+        ), unsafe_allow_html=True)
+
+    _row2 = st.columns(4)
+    with _row2[0]:
+        st.markdown(kpi_card(
+            fmt_brl_curto(kpis["em_gargalo"]),
             sub="Em gargalo · aguardando",
             classe="sol", icone=svg_icon("clock", cor=C["sol_texto"]),
             pill_texto="atenção", pill_classe="sol",
+            titulo=fmt_brl(kpis["em_gargalo"]),
         ), unsafe_allow_html=True)
 
-    with col5:
+    with _row2[1]:
         _venc = kpis["vencidos"]
         _cor_venc = C["urucum"] if _venc > 0 else C["folha"]
         st.markdown(kpi_card(
@@ -1839,7 +1875,7 @@ def _secao_indicadores():
             pill_classe="urucum" if _venc > 0 else "folha",
         ), unsafe_allow_html=True)
 
-    with col6:
+    with _row2[2]:
         st.markdown(kpi_card(
             f"{kpis['perc_execucao']:.1f}%",
             sub=f"{kpis['fornecedores']} fornecedores ativos",
