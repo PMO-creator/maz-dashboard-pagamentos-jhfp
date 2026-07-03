@@ -373,6 +373,18 @@ div[data-testid="stDataFrame"] {
     overflow-x: hidden;
 }
 
+/* --- Menu de navegação (st.navigation): herda as cores do tema ativo, --- */
+/* --- senão o texto fica escuro e some no modo escuro.                  --- */
+[data-testid="stSidebarNav"] p,
+[data-testid="stSidebarNav"] span {
+    color: var(--ink-soft) !important;
+}
+[data-testid="stSidebarNav"] a[data-testid="stSidebarNavLink"] p,
+[data-testid="stSidebarNav"] a[data-testid="stSidebarNavLink"] span,
+[data-testid="stSidebarNav"] a[data-testid="stSidebarNavLink"] [data-testid="stIconMaterial"] {
+    color: var(--ink) !important;
+}
+
 /* --- Upload box --- */
 [data-testid="stFileUploader"] {
     border: 1px dashed var(--upload-border);
