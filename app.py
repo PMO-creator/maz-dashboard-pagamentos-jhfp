@@ -1011,132 +1011,17 @@ with st.sidebar:
         st.rerun()
 
     # ------------------------------------------------------------------ #
-    # Configurações — visível para Owner e Admin                          #
+    # Upload manual — fonte alternativa ao Google Sheets (fallback)       #
+    # As telas de Configurações / Acessos / Log viraram a página          #
+    # "Configurações" (seção Sistema do menu).                            #
     # ------------------------------------------------------------------ #
-    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
-        st.markdown("---")
-        with st.expander("⚙️ Configurações", expanded=not bool(sheets_url_input)):
-            novo_url = st.text_input(
-                "🔗 Link do Google Sheets",
-                value=sheets_url_input,
-                placeholder="https://docs.google.com/spreadsheets/d/...",
-            )
-            nova_aba = st.text_input(
-                "📑 Nome da aba",
-                value=nome_aba_input,
-                placeholder="Ex: Pagamentos 2025",
-                help="Nome exato da aba (case sensitive).",
-            )
-
-            if st.button("💾 Salvar", use_container_width=True):
-                # Persiste em disco por 5 dias — sobrevive a F5 e recargas
-                _salvar_config_persistente(novo_url, nova_aba)
-                sheets_url_input = novo_url
-                nome_aba_input   = nova_aba
-                st.success("Configurações salvas por 5 dias.")
-                st.rerun()
-
-    # ------------------------------------------------------------------ #
-    # Gerenciar Acessos — visível APENAS para o Owner                      #
-    # ------------------------------------------------------------------ #
-    if _papel_usuario == dh.PAPEL_OWNER:
-        st.markdown("---")
-        with st.expander("👑 Gerenciar Acessos", expanded=False):
-            st.caption("Cadastre administradores e visualizadores. Visível apenas para você.")
-
-            with st.form("form_novo_usuario", clear_on_submit=True):
-                novo_login = st.text_input("Login do novo usuário")
-                novo_nome  = st.text_input("Nome de exibição")
-                nova_senha = st.text_input("Senha", type="password")
-                novo_papel = st.selectbox(
-                    "Papel",
-                    options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER, dh.PAPEL_REQUISITANTE],
-                    format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
-                )
-                cadastrar = st.form_submit_button("➕ Cadastrar", use_container_width=True)
-
-            if cadastrar:
-                if not novo_login.strip() or not nova_senha:
-                    st.error("Login e senha são obrigatórios.")
-                elif novo_login.strip() == _OWNER_LOGIN:
-                    st.error("Este login já é o do Owner.")
-                else:
-                    dh.adicionar_usuario(novo_login, nova_senha, novo_papel, novo_nome)
-                    st.success(f"Usuário **{novo_login}** cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}.")
-                    st.rerun()
-
-            st.divider()
-            st.caption("Usuários cadastrados:")
-            usuarios_cadastrados = dh.carregar_usuarios()
-
-            if not usuarios_cadastrados:
-                st.caption("Nenhum administrador ou viewer cadastrado ainda.")
-            else:
-                for login_u, dados_u in usuarios_cadastrados.items():
-                    col_info, col_del = st.columns([3, 1])
-                    with col_info:
-                        papel_u = dados_u.get("papel", dh.PAPEL_VIEWER)
-                        st.markdown(
-                            f"**{dados_u.get('nome', login_u)}**  \n"
-                            f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
-                            unsafe_allow_html=True,
-                        )
-                    with col_del:
-                        if st.button("🗑️", key=f"del_{login_u}", help=f"Remover {login_u}"):
-                            dh.remover_usuario(login_u)
-                            st.rerun()
-
-    # ------------------------------------------------------------------ #
-    # Log de Alterações — visível para Owner e Admin                       #
-    # ------------------------------------------------------------------ #
-    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
-        st.markdown("---")
-        with st.expander("📋 Log de Alterações", expanded=False):
-            entradas_log = dh.carregar_log()
-            if not entradas_log:
-                st.caption("Nenhuma alteração registrada ainda.\nO dashboard verifica mudanças a cada 1 hora automaticamente.")
-            else:
-                # Mostra as últimas 20 entradas, mais recentes primeiro
-                for entrada in reversed(entradas_log[-20:]):
-                    horario_str = datetime.fromisoformat(entrada["horario"]).strftime("%d/%m/%Y %H:%M")
-                    total = entrada.get("total", len(entrada.get("alteracoes", [])))
-                    st.markdown(
-                        f"**🕐 {horario_str}** — {total} alteração{'ões' if total != 1 else ''}",
-                    )
-                    for alt in entrada.get("alteracoes", []):
-                        linha   = alt.get("linha", "?")
-                        forn    = alt.get("fornecedor", "—")
-                        tipo    = alt.get("tipo", "")
-                        campo   = alt.get("campo", "—")
-                        de_val  = alt.get("de", "—")
-                        para    = alt.get("para", "—")
-
-                        if campo == "(linha)":
-                            if para == "adicionada":
-                                st.caption(f"  ➕ Linha {linha} · {tipo} · {forn} — nova linha")
-                            else:
-                                st.caption(f"  ➖ Linha {linha} · {tipo} · {forn} — removida")
-                        else:
-                            _NOMES_CAMPOS = {
-                                "status": "Status", "valor": "Valor", "fornecedor": "Fornecedor",
-                                "req_mxm": "Req. MXM", "data_pgto": "Data Pgto",
-                                "doc_fiscal": "Doc. Fiscal", "termino_contrato": "Término",
-                                "observacoes": "Observações", "tipo": "Tipo",
-                            }
-                            campo_label = _NOMES_CAMPOS.get(campo, campo)
-                            st.caption(f"  ✏️ Linha {linha} · {forn} · **{campo_label}**: {de_val} → {para}")
-                    st.divider()
-
-    # Upload manual (disponível para todos)
+    st.markdown("---")
     st.markdown("### 📎 Upload Manual")
     arquivo = st.file_uploader(
         "Planilha (.xlsx ou .csv)",
         type=["xlsx", "xls", "csv"],
         help="Alternativa ao Google Sheets. O upload tem prioridade sobre o link.",
     )
-
-    st.markdown("---")
-    st.markdown("### 🎛️ Filtros")
 
 
 # --------------------------------------------------------------------------- #
@@ -1328,54 +1213,13 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
 # --------------------------------------------------------------------------- #
 
 with st.sidebar:
-    # Os filtros de fornecedor/situação foram substituídos pela BUSCA em
-    # destaque no topo de Acompanhar Pedidos de Compra (mais rápida de usar).
+    # A busca substituiu os filtros de sidebar; as Aprovações viraram a página
+    # "Aprovações" (seção Fluxo do menu, visível ao Owner).
     st.markdown("---")
     st.caption(
         f"**{len(df)}** registros carregados · "
         f"**{df['fornecedor'].nunique() if 'fornecedor' in df.columns else 0}** fornecedores"
     )
-
-    # ------------------------------------------------------------------ #
-    # Aprovações Pendentes — visível apenas para o Owner (por enquanto)    #
-    # ------------------------------------------------------------------ #
-    if _papel_usuario == dh.PAPEL_OWNER and sheets_url_input and "gcp_service_account" in st.secrets:
-        try:
-            _n_pendentes = dh.contar_pendentes(sheets_url_input)
-        except Exception:
-            _n_pendentes = 0
-
-        st.markdown("---")
-        if _n_pendentes > 0:
-            st.markdown(
-                f'<span style="background:{C["urucum"]};color:#fff;border-radius:999px;'
-                f'padding:2px 10px;font-size:0.72rem;font-weight:700;">'
-                f'🔴 {_n_pendentes} pendente{"s" if _n_pendentes != 1 else ""}</span>',
-                unsafe_allow_html=True,
-            )
-        with st.expander("🔔 Aprovações Pendentes", expanded=False):
-            try:
-                _solicitacoes = dh.listar_solicitacoes(sheets_url_input, apenas_status=dh.STATUS_APROVACAO_PENDENTE)
-            except Exception as e:
-                _solicitacoes = []
-                st.error(f"Não foi possível carregar as solicitações: `{e}`")
-
-            if not _solicitacoes:
-                st.caption("Nenhuma solicitação pendente no momento.")
-            else:
-                for _s in _solicitacoes:
-                    _c = _s["compra"]
-                    col_info, col_ver = st.columns([3, 1])
-                    with col_info:
-                        st.markdown(
-                            f"**{_c.get('fornecedor', '—')}**  \n"
-                            f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>"
-                            f"{_s['solicitante_nome']} · {_s['data_solicitacao']}</span>",
-                            unsafe_allow_html=True,
-                        )
-                    with col_ver:
-                        if st.button("👁️", key=f"revisar_{_s['idx']}", help="Revisar solicitação"):
-                            _dialog_revisar_solicitacao(_s)
 
 # Sem filtros de sidebar: os KPIs, gráficos e a exportação usam a base completa.
 df_filtrado = df
@@ -2782,17 +2626,166 @@ def _pagina_contratos():
     _secao_acompanhar()
 
 
+def _pagina_aprovacoes():
+    """Owner revisa/aprova/rejeita as solicitações enviadas pelos Requisitantes."""
+    secao_titulo("Aprovações Pendentes", icone="bell")
+    if not sheets_url_input or "gcp_service_account" not in st.secrets:
+        st.info(
+            "🔒 As aprovações exigem a Service Account configurada nos Secrets "
+            "(`gcp_service_account`).",
+            icon="ℹ️",
+        )
+        return
+    try:
+        _solicitacoes = dh.listar_solicitacoes(sheets_url_input, apenas_status=dh.STATUS_APROVACAO_PENDENTE)
+    except Exception as e:
+        st.error(f"Não foi possível carregar as solicitações: `{e}`")
+        return
+
+    if not _solicitacoes:
+        st.success("✅ Nenhuma solicitação pendente no momento.")
+        return
+
+    for _s in _solicitacoes:
+        _c = _s["compra"]
+        col_info, col_ver = st.columns([4, 1])
+        with col_info:
+            st.markdown(
+                f"**{html.escape(str(_c.get('fornecedor', '—')))}** &nbsp;·&nbsp; "
+                f"{html.escape(_fmt(_c.get('valor'), 'valor'))}  \n"
+                f"<span style='color:{C['ink_soft']};font-size:0.76rem;'>"
+                f"{html.escape(str(_s['solicitante_nome']))} · {html.escape(str(_s['data_solicitacao']))}</span>",
+                unsafe_allow_html=True,
+            )
+        with col_ver:
+            if st.button("👁️ Revisar", key=f"revisar_{_s['idx']}", use_container_width=True):
+                _dialog_revisar_solicitacao(_s)
+
+
+def _pagina_configuracoes():
+    """Fonte de dados, gestão de acessos e log de alterações (Owner/Admin)."""
+    secao_titulo("Configurações", icone="dash")
+
+    # --- Fonte de dados (Google Sheets) — Owner e Admin ---
+    st.markdown("**Fonte de dados**")
+    novo_url = st.text_input(
+        "🔗 Link do Google Sheets",
+        value=sheets_url_input,
+        placeholder="https://docs.google.com/spreadsheets/d/...",
+    )
+    nova_aba = st.text_input(
+        "📑 Nome da aba",
+        value=nome_aba_input,
+        placeholder="Ex: Pagamentos 2025",
+        help="Nome exato da aba (case sensitive).",
+    )
+    if st.button("💾 Salvar fonte de dados"):
+        _salvar_config_persistente(novo_url, nova_aba)
+        st.session_state["flash_ok"] = "Configurações salvas por 5 dias."
+        st.rerun()
+
+    # --- Gerenciar Acessos — visível APENAS para o Owner ---
+    if _papel_usuario == dh.PAPEL_OWNER:
+        st.divider()
+        secao_titulo("Gerenciar Acessos", icone="user")
+        st.caption("Cadastre administradores, visualizadores e requisitantes.")
+
+        with st.form("form_novo_usuario", clear_on_submit=True):
+            novo_login = st.text_input("Login do novo usuário")
+            novo_nome  = st.text_input("Nome de exibição")
+            nova_senha = st.text_input("Senha", type="password")
+            novo_papel = st.selectbox(
+                "Papel",
+                options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER, dh.PAPEL_REQUISITANTE],
+                format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
+            )
+            cadastrar = st.form_submit_button("➕ Cadastrar")
+
+        if cadastrar:
+            if not novo_login.strip() or not nova_senha:
+                st.error("Login e senha são obrigatórios.")
+            elif novo_login.strip() == _OWNER_LOGIN:
+                st.error("Este login já é o do Owner.")
+            else:
+                dh.adicionar_usuario(novo_login, nova_senha, novo_papel, novo_nome)
+                st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
+                st.rerun()
+
+        st.caption("Usuários cadastrados:")
+        usuarios_cadastrados = dh.carregar_usuarios()
+        if not usuarios_cadastrados:
+            st.caption("Nenhum administrador ou viewer cadastrado ainda.")
+        else:
+            for login_u, dados_u in usuarios_cadastrados.items():
+                col_info, col_del = st.columns([4, 1])
+                with col_info:
+                    papel_u = dados_u.get("papel", dh.PAPEL_VIEWER)
+                    st.markdown(
+                        f"**{dados_u.get('nome', login_u)}**  \n"
+                        f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>{login_u} · {_PAPEL_LABEL.get(papel_u, papel_u)}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with col_del:
+                    if st.button("🗑️", key=f"del_{login_u}", help=f"Remover {login_u}"):
+                        dh.remover_usuario(login_u)
+                        st.rerun()
+
+    # --- Log de Alterações — Owner e Admin ---
+    st.divider()
+    secao_titulo("Log de Alterações", icone="file_text")
+    entradas_log = dh.carregar_log()
+    if not entradas_log:
+        st.caption("Nenhuma alteração registrada ainda.\nO dashboard verifica mudanças a cada 1 hora automaticamente.")
+    else:
+        for entrada in reversed(entradas_log[-20:]):
+            horario_str = datetime.fromisoformat(entrada["horario"]).strftime("%d/%m/%Y %H:%M")
+            total = entrada.get("total", len(entrada.get("alteracoes", [])))
+            st.markdown(f"**🕐 {horario_str}** — {total} alteração{'ões' if total != 1 else ''}")
+            for alt in entrada.get("alteracoes", []):
+                linha   = alt.get("linha", "?")
+                forn    = alt.get("fornecedor", "—")
+                tipo    = alt.get("tipo", "")
+                campo   = alt.get("campo", "—")
+                de_val  = alt.get("de", "—")
+                para    = alt.get("para", "—")
+                if campo == "(linha)":
+                    if para == "adicionada":
+                        st.caption(f"  ➕ Linha {linha} · {tipo} · {forn} — nova linha")
+                    else:
+                        st.caption(f"  ➖ Linha {linha} · {tipo} · {forn} — removida")
+                else:
+                    _NOMES_CAMPOS = {
+                        "status": "Status", "valor": "Valor", "fornecedor": "Fornecedor",
+                        "req_mxm": "Req. MXM", "data_pgto": "Data Pgto",
+                        "doc_fiscal": "Doc. Fiscal", "termino_contrato": "Término",
+                        "observacoes": "Observações", "tipo": "Tipo",
+                    }
+                    campo_label = _NOMES_CAMPOS.get(campo, campo)
+                    st.caption(f"  ✏️ Linha {linha} · {forn} · **{campo_label}**: {de_val} → {para}")
+            st.divider()
+
+
 _paginas_menu = [
     st.Page(_pagina_painel,    title="Painel Gerencial",     icon=":material/dashboard:", default=True),
     st.Page(_pagina_prazos,    title="Prazos de Contratos",  icon=":material/event:"),
     st.Page(_pagina_contratos, title="Contratos",            icon=":material/description:"),
 ]
-
-# "Novo Lançamento" só aparece para quem pode lançar ou solicitar (não Viewer)
 _estrutura_nav = {"Menu": _paginas_menu}
+
+# Fluxo: Novo Lançamento (quem lança/solicita) + Aprovações (só Owner)
+_fluxo = []
 if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN, dh.PAPEL_REQUISITANTE):
-    _estrutura_nav["Fluxo"] = [
-        st.Page(_pagina_lancamento, title="Novo Lançamento", icon=":material/add_circle:"),
+    _fluxo.append(st.Page(_pagina_lancamento, title="Novo Lançamento", icon=":material/add_circle:"))
+if _papel_usuario == dh.PAPEL_OWNER:
+    _titulo_aprov = f"Aprovações ({_n_pendentes_header})" if _n_pendentes_header else "Aprovações"
+    _fluxo.append(st.Page(_pagina_aprovacoes, title=_titulo_aprov, icon=":material/inbox:"))
+if _fluxo:
+    _estrutura_nav["Fluxo"] = _fluxo
+
+# Sistema: Configurações (Owner/Admin)
+if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+    _estrutura_nav["Sistema"] = [
+        st.Page(_pagina_configuracoes, title="Configurações", icon=":material/settings:"),
     ]
 
 _mostrar_flash()
