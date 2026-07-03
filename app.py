@@ -1462,6 +1462,9 @@ def _extrair_termino_vigencia(texto: str) -> "date | None":
         r"vig[êe]ncia\s+de\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}\s+a\s+(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
         r"vig[êe]ncia\s+de\s+\d{1,2}/\d{1,2}/\d{4}\s+a\s+(\d{1,2}/\d{1,2}/\d{4})",
         r"vig[êe]ncia[^.]{0,60}?\bat[ée]\s+(\d{1,2}\s+de\s+\w+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{4})",
+        # "vigorará durante o período de X a Y" / "período de X a Y"
+        r"per[íi]odo\s+de\s+\d{1,2}\s+de\s+\w+\s+de\s+\d{4}\s+a\s+(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})",
+        r"per[íi]odo\s+de\s+\d{1,2}/\d{1,2}/\d{4}\s+a\s+(\d{1,2}/\d{1,2}/\d{4})",
     ]
     for p in padroes:
         for m in re.finditer(p, t, re.IGNORECASE):
@@ -1479,14 +1482,36 @@ _STATUS_PARCELA_PADRAO = "Aguardando emissão de NF/DANFE"
 def _extrair_parcelas(texto: str, valor_total: "float | None") -> list[dict]:
     """
     Reconhece as parcelas de pagamento descritas no documento. A grande maioria
-    dos pedidos/contratos do IDG é pagamento único (uma parcela = valor total);
-    só divide em várias quando o texto descreve parcelamento de forma explícita
-    ('em 3 parcelas de R$...', '1ª parcela ... R$...'). O detalhamento de custos
-    por item (ex: 'a) Projeto R$3.800 b) Visita R$6.480') NÃO conta como parcela,
-    pois nesses casos o pagamento é integral.
+    dos pedidos/contratos do IDG é pagamento único (uma parcela = valor total),
+    mas contratos parcelados descrevem cada parcela na cláusula de pagamento.
+    Divide em várias parcelas quando o texto as descreve explicitamente:
+      - enumeração com valor próprio ('(i) Primeira Parcela, no valor bruto de
+        R$ X ... (ii) Saldo Remanescente, no valor bruto de R$ Y') — o total
+        usa 'valor bruto E TOTAL de R$', que é distinto e fica de fora;
+      - 'em N parcelas de R$ X';
+      - '1ª parcela ... R$ X ... 2ª parcela ... R$ Y';
+      - divisão percentual do valor total ('30% ... 70%', '50% ... 50%').
+    O detalhamento de custos por item (ex: 'a) Projeto R$3.800 b) Visita
+    R$6.480') NÃO conta como parcela — nesses casos o pagamento é integral.
     """
     t = re.sub(r"\s+", " ", texto)
-    # 1) "em N (…) parcelas [iguais/mensais] de R$ X"
+
+    def _parcelas(valores: list[float]) -> list[dict]:
+        return [{"valor": v, "status": _STATUS_PARCELA_PADRAO} for v in valores]
+
+    # 1) Enumeração de parcelas com valor próprio ("no valor bruto de R$ X").
+    #    O valor total do contrato usa "valor bruto E TOTAL de R$" — não casa
+    #    aqui; ainda assim, por segurança, descartamos qualquer valor igual ao
+    #    total (caso algum contrato escreva o total de outra forma).
+    enumeradas = [v for v in (
+        _parse_valor_brl(x) for x in re.findall(r"valor\s+bruto\s+de\s+R\$\s*([\d.,]+)", t, re.IGNORECASE)
+    ) if v]
+    if valor_total:
+        enumeradas = [v for v in enumeradas if abs(v - valor_total) >= 0.01]
+    if len(enumeradas) >= 2:
+        return _parcelas(enumeradas)
+
+    # 2) "em N (…) parcelas [iguais/mensais] de R$ X"
     m = re.search(
         r"\bem\s+(\d{1,2})\s*(?:\([^)]*\)\s*)?parcelas?\b[^.]{0,80}?de\s+R\$\s*([\d.,]+)",
         t, re.IGNORECASE,
@@ -1495,18 +1520,25 @@ def _extrair_parcelas(texto: str, valor_total: "float | None") -> list[dict]:
         n = int(m.group(1))
         v = _parse_valor_brl(m.group(2))
         if 2 <= n <= 60 and v:
-            return [{"valor": v, "status": _STATUS_PARCELA_PADRAO} for _ in range(n)]
-    # 2) parcelas nomeadas: "1ª parcela ... R$ X", "2ª parcela ... R$ Y"
-    nomeadas = []
-    for mm in re.finditer(r"\b\d{1,2}[ªaºo]\s*parcela\b[^R]{0,50}R\$\s*([\d.,]+)", t, re.IGNORECASE):
-        v = _parse_valor_brl(mm.group(1))
-        if v:
-            nomeadas.append({"valor": v, "status": _STATUS_PARCELA_PADRAO})
+            return _parcelas([v] * n)
+
+    # 3) parcelas nomeadas: "1ª parcela ... R$ X", "2ª parcela ... R$ Y"
+    nomeadas = [v for v in (
+        _parse_valor_brl(mm.group(1))
+        for mm in re.finditer(r"\b\d{1,2}[ªaºo]\s*parcela\b[^R]{0,50}R\$\s*([\d.,]+)", t, re.IGNORECASE)
+    ) if v]
     if len(nomeadas) >= 2:
-        return nomeadas
-    # 3) padrão: pagamento único = valor total
+        return _parcelas(nomeadas)
+
+    # 4) divisão por percentuais do valor total ("30% ... 70%", "50% ... 50%")
     if valor_total:
-        return [{"valor": float(valor_total), "status": _STATUS_PARCELA_PADRAO}]
+        percs = [int(x) for x in re.findall(r"(\d{1,3})\s*%\s*(?:\([^)]*\)\s*)?do valor total", t, re.IGNORECASE)]
+        if len(percs) >= 2 and abs(sum(percs) - 100) <= 1:
+            return _parcelas([round(valor_total * p / 100, 2) for p in percs])
+
+    # 5) padrão: pagamento único = valor total
+    if valor_total:
+        return _parcelas([float(valor_total)])
     return []
 
 
