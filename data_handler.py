@@ -1278,10 +1278,11 @@ def calcular_kpis(df: pd.DataFrame) -> dict:
     status_gargalo = STATUS_GRUPOS["alerta"] + STATUS_GRUPOS["em_andamento"]
     em_gargalo = _soma_segura(df_pag, "status", status_gargalo, "valor", "isin")
 
-    # KPI 5 — Contratos vencidos
+    # KPI 5 — Contratos vencidos (por DATA de término já passada, alinhado ao
+    # alerta do topo e ao card "A vencer em 30 dias" — ambos por data).
     vencidos = (
-        len(df_compras[df_compras["status"].isin(STATUS_GRUPOS["critico"])])
-        if "status" in df_compras.columns else 0
+        int((df_compras["prazo_status"] == PRAZO_VENCIDO).sum())
+        if "prazo_status" in df_compras.columns else 0
     )
 
     # KPI 6 — Total de fornecedores únicos

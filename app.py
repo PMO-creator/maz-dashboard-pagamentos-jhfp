@@ -1810,7 +1810,68 @@ def _pagina_lancamento():
 
 # --------------------------------------------------------------------------- #
 # SEÇÃO 1 — KPI CARDS (visão macro para a diretoria)                           #
+# Alguns cards são clicáveis: abrem um modal com a lista por trás do número.   #
 # --------------------------------------------------------------------------- #
+
+def _tabela_pagamentos_kpi(d):
+    """Tabela de parcelas/pagamentos para o modal de detalhe de um KPI."""
+    if d is None or d.empty:
+        st.caption("Nenhum registro nesta categoria.")
+        return
+    d = d.sort_values("valor", ascending=False) if "valor" in d.columns else d
+    cols = {}
+    if "fornecedor" in d.columns: cols["Fornecedor"] = d["fornecedor"].astype(str)
+    if "valor" in d.columns:      cols["Valor"] = d["valor"].apply(fmt_brl)
+    if "status" in d.columns:     cols["Status"] = d["status"].astype(str)
+    if "doc_fiscal" in d.columns: cols["NF"] = d["doc_fiscal"].apply(lambda x: _val_txt(x) or "—")
+    if "data_pgto" in d.columns:  cols["Data pgto"] = d["data_pgto"].apply(lambda x: _fmt(x, "data"))
+    st.dataframe(pd.DataFrame(cols), use_container_width=True, hide_index=True)
+
+
+def _tabela_contratos_kpi(d):
+    """Tabela de contratos (compras) para o modal de detalhe de um KPI."""
+    if d is None or d.empty:
+        st.caption("Nenhum registro nesta categoria.")
+        return
+    d = d.sort_values("dias_para_vencer") if "dias_para_vencer" in d.columns else d
+    cols = {}
+    if "fornecedor" in d.columns:       cols["Fornecedor"] = d["fornecedor"].astype(str)
+    if "valor" in d.columns:            cols["Valor"] = d["valor"].apply(fmt_brl)
+    if "termino_contrato" in d.columns: cols["Término"] = d["termino_contrato"].apply(lambda x: _fmt(x, "data"))
+    if "descritivo" in d.columns:       cols["Descritivo"] = d["descritivo"].apply(lambda x: _val_txt(x) or "—")
+    st.dataframe(pd.DataFrame(cols), use_container_width=True, hide_index=True)
+
+
+@st.dialog("Detalhamento do indicador", width="large")
+def _dialog_kpi_detalhe(qual: str):
+    if qual == "pago":
+        st.markdown(f"**Total pago** &nbsp;·&nbsp; {fmt_brl(kpis['pago'])}")
+        _d = df_pag[df_pag["status"] == "Pago"] if "status" in df_pag.columns else None
+        _tabela_pagamentos_kpi(_d)
+    elif qual == "a_pagar":
+        st.markdown(f"**Saldo a pagar** &nbsp;·&nbsp; {fmt_brl(kpis['a_pagar'])}")
+        _d = df_pag[df_pag["status"] != "Pago"] if "status" in df_pag.columns else None
+        _tabela_pagamentos_kpi(_d)
+    elif qual == "gargalo":
+        st.markdown(f"**Em gargalo · aguardando** &nbsp;·&nbsp; {fmt_brl(kpis['em_gargalo'])}")
+        _sts = dh.STATUS_GRUPOS["alerta"] + dh.STATUS_GRUPOS["em_andamento"]
+        _d = df_pag[df_pag["status"].isin(_sts)] if "status" in df_pag.columns else None
+        _tabela_pagamentos_kpi(_d)
+    elif qual == "a_vencer":
+        st.markdown(f"**A vencer em até 30 dias** &nbsp;·&nbsp; {fmt_brl(kpis['a_vencer_30d'])}")
+        _d = df_compras[df_compras["prazo_status"] == dh.PRAZO_URGENTE] if "prazo_status" in df_compras.columns else None
+        _tabela_contratos_kpi(_d)
+    elif qual == "vencidos":
+        st.markdown(f"**Contratos vencidos** &nbsp;·&nbsp; {kpis['vencidos']} contrato(s)")
+        _d = df_compras[df_compras["prazo_status"] == dh.PRAZO_VENCIDO] if "prazo_status" in df_compras.columns else None
+        _tabela_contratos_kpi(_d)
+
+
+def _botao_detalhe(qual: str, key: str):
+    """Botão discreto sob um KPI clicável — abre o modal com a lista por trás."""
+    if st.button("Ver detalhes  →", key=key, use_container_width=True):
+        _dialog_kpi_detalhe(qual)
+
 
 def _secao_indicadores():
     secao_titulo("Indicadores Executivos", icone="bar_chart")
@@ -1833,6 +1894,7 @@ def _secao_indicadores():
             pill_texto=f"{kpis['perc_execucao']:.1f}%", pill_classe="folha",
             titulo=fmt_brl(kpis["pago"]),
         ), unsafe_allow_html=True)
+        _botao_detalhe("pago", "kpi_det_pago")
 
     with _row1[2]:
         st.markdown(kpi_card(
@@ -1842,6 +1904,7 @@ def _secao_indicadores():
             pill_texto="pendente", pill_classe="sol",
             titulo=fmt_brl(kpis["a_pagar"]),
         ), unsafe_allow_html=True)
+        _botao_detalhe("a_pagar", "kpi_det_apagar")
 
     with _row1[3]:
         _nv30 = kpis["n_a_vencer_30d"]
@@ -1853,6 +1916,7 @@ def _secao_indicadores():
             pill_classe="sol",
             titulo=fmt_brl(kpis["a_vencer_30d"]),
         ), unsafe_allow_html=True)
+        _botao_detalhe("a_vencer", "kpi_det_avencer")
 
     _row2 = st.columns(4)
     with _row2[0]:
@@ -1863,6 +1927,7 @@ def _secao_indicadores():
             pill_texto="atenção", pill_classe="sol",
             titulo=fmt_brl(kpis["em_gargalo"]),
         ), unsafe_allow_html=True)
+        _botao_detalhe("gargalo", "kpi_det_gargalo")
 
     with _row2[1]:
         _venc = kpis["vencidos"]
@@ -1874,6 +1939,7 @@ def _secao_indicadores():
             pill_texto="crítico" if _venc > 0 else "ok",
             pill_classe="urucum" if _venc > 0 else "folha",
         ), unsafe_allow_html=True)
+        _botao_detalhe("vencidos", "kpi_det_vencidos")
 
     with _row2[2]:
         st.markdown(kpi_card(
