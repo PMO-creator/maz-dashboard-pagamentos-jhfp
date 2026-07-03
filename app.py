@@ -946,14 +946,16 @@ _badge_html = (
     f'<span class="header-bell-badge">{_n_pendentes_header}</span>'
     if _n_pendentes_header > 0 else ""
 )
-st.markdown('<div class="maz-trancado"></div>', unsafe_allow_html=True)
-st.markdown(f"""
+def _render_header(titulo_pagina: str):
+    """Cabeçalho fixo no topo de todas as páginas; o título reflete a página atual."""
+    st.markdown('<div class="maz-trancado"></div>', unsafe_allow_html=True)
+    st.markdown(f"""
 <div class="header-container">
     {_logo_html}
     <div class="header-divider"></div>
     <div>
         <span class="header-eyebrow">Gestão de Pagamentos · IDG</span>
-        <p class="header-title">Painel Gerencial</p>
+        <p class="header-title">{html.escape(titulo_pagina)}</p>
     </div>
     <div class="header-topbar">
         <div class="header-search">{_icon_search} Buscar pedidos, fornecedores...</div>
@@ -1085,43 +1087,42 @@ if df is None or df.empty:
 df_compras, df_pag = dh.separar_por_tipo(df)
 kpis = dh.calcular_kpis(df)
 
-# Indicador discreto de fonte e última atualização
-st.caption(fonte_dados)
+def _render_topo_contexto():
+    """Fonte de dados, alerta de prazos e aviso de mapeamento — no topo de toda página."""
+    # Indicador discreto de fonte e última atualização
+    st.caption(fonte_dados)
 
-# --------------------------------------------------------------------------- #
-# ALERTA AUTOMÁTICO DE PRAZOS — aparece sozinho, sem precisar clicar em nada  #
-# --------------------------------------------------------------------------- #
-if "prazo_status" in df_compras.columns:
-    _n_vencidos = int((df_compras["prazo_status"] == dh.PRAZO_VENCIDO).sum())
-    _n_urgentes = int((df_compras["prazo_status"] == dh.PRAZO_URGENTE).sum())
-    if _n_vencidos or _n_urgentes:
-        _partes = []
-        if _n_vencidos:
-            _partes.append(f"🚨 <strong>{_n_vencidos}</strong> contrato{'s' if _n_vencidos != 1 else ''} vencido{'s' if _n_vencidos != 1 else ''}")
-        if _n_urgentes:
-            _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
-        st.markdown(
-            f"""
-            <div style="background:{C['urucum']}0F;border:1px solid {C['urucum']}55;border-radius:6px;
-                        padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:{C['ink']};">
-                {" &nbsp;·&nbsp; ".join(_partes)}
-                &nbsp;·&nbsp; <span style="color:{C['ink_soft']};">veja em 📅 Prazos de Contratos, abaixo</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # Alerta automático de prazos (vencidos / vencendo em 30 dias)
+    if "prazo_status" in df_compras.columns:
+        _n_vencidos = int((df_compras["prazo_status"] == dh.PRAZO_VENCIDO).sum())
+        _n_urgentes = int((df_compras["prazo_status"] == dh.PRAZO_URGENTE).sum())
+        if _n_vencidos or _n_urgentes:
+            _partes = []
+            if _n_vencidos:
+                _partes.append(f"🚨 <strong>{_n_vencidos}</strong> contrato{'s' if _n_vencidos != 1 else ''} vencido{'s' if _n_vencidos != 1 else ''}")
+            if _n_urgentes:
+                _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
+            st.markdown(
+                f"""
+                <div style="background:{C['urucum']}0F;border:1px solid {C['urucum']}55;border-radius:6px;
+                            padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:{C['ink']};">
+                    {" &nbsp;·&nbsp; ".join(_partes)}
+                    &nbsp;·&nbsp; <span style="color:{C['ink_soft']};">detalhes em 📅 Prazos de Contratos</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-# Alerta de diagnóstico: exibe aviso se colunas essenciais não foram mapeadas.
-# Isso ajuda a identificar quando o nome da coluna na planilha é diferente do esperado.
-_colunas_essenciais = {"tipo", "fornecedor", "valor", "status"}
-_colunas_faltando = _colunas_essenciais - set(df.columns)
-if _colunas_faltando:
-    with st.expander("⚠️ Aviso de mapeamento de colunas — clique para ver detalhes", expanded=True):
-        st.warning(
-            f"As seguintes colunas não foram reconhecidas: **{', '.join(sorted(_colunas_faltando))}**\n\n"
-            "Verifique se os nomes na planilha coincidem com os esperados.\n\n"
-            f"**Colunas recebidas da planilha:** `{', '.join(df.columns.tolist())}`"
-        )
+    # Aviso de diagnóstico: colunas essenciais não mapeadas
+    _colunas_essenciais = {"tipo", "fornecedor", "valor", "status"}
+    _colunas_faltando = _colunas_essenciais - set(df.columns)
+    if _colunas_faltando:
+        with st.expander("⚠️ Aviso de mapeamento de colunas — clique para ver detalhes", expanded=True):
+            st.warning(
+                f"As seguintes colunas não foram reconhecidas: **{', '.join(sorted(_colunas_faltando))}**\n\n"
+                "Verifique se os nomes na planilha coincidem com os esperados.\n\n"
+                f"**Colunas recebidas da planilha:** `{', '.join(df.columns.tolist())}`"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -2788,8 +2789,10 @@ if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
         st.Page(_pagina_configuracoes, title="Configurações", icon=":material/settings:"),
     ]
 
-_mostrar_flash()
 _nav = st.navigation(_estrutura_nav)
+_render_header(_nav.title)
+_render_topo_contexto()
+_mostrar_flash()
 _nav.run()
 
 
