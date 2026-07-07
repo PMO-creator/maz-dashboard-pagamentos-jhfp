@@ -23,20 +23,31 @@
 #     Fase 3 decide onde isso roda de forma recorrente (Cloud Function,
 #     GitHub Actions etc.).
 #
-# CONFIGURAÇÃO NECESSÁRIA (uma vez, feita por quem tem acesso à caixa):
-#   1. Criar um "OAuth Client ID" tipo Desktop no Google Cloud Console (no
-#      mesmo projeto onde já existe a Service Account do Sheets, ou um novo)
-#      e habilitar a Gmail API para o projeto.
-#   2. Baixar o arquivo de credenciais e salvar como `.credenciais_gmail.json`
-#      nesta pasta (mesmo nível deste arquivo — está no .gitignore).
-#   3. Rodar este script uma vez: ele abre o navegador pedindo para a pessoa
-#      logar na caixa exposicoeseprojetos@idg.org.br e autorizar o acesso.
-#      Depois disso, um `.token_gmail.json` é salvo e o script nunca mais
-#      pede login (renova o token sozinho).
-#   4. Este script usa as MESMAS Secrets do dashboard (SHEETS_URL, SHEETS_ABA,
-#      gcp_service_account) — precisa rodar num ambiente com acesso a elas
-#      (ex: `.streamlit/secrets.toml` local com as credenciais de produção,
-#      ou as variáveis equivalentes no ambiente onde for hospedado).
+# AUTENTICAÇÃO — delegação em nível de domínio (não usa login interativo).
+# Reaproveita a MESMA Service Account já usada pra escrever na planilha
+# (st.secrets["gcp_service_account"]) — evita totalmente a tela de
+# "OAuth Client ID / Interno x Externo" que trava em contas Workspace sem
+# uma Organização configurada no Google Cloud.
+#
+# CONFIGURAÇÃO NECESSÁRIA (uma vez, feita pelo TI/admin do Workspace):
+#   1. No Admin Console do Google Workspace (admin.google.com), ir em:
+#      Segurança → Controles de API → Delegação em todo o domínio
+#      → "Adicionar novo".
+#   2. "ID do cliente": o Client ID numérico da Service Account (está no
+#      campo "client_id" do JSON da credencial, ou na página da Service
+#      Account no Google Cloud Console).
+#   3. "Escopos OAuth": cole exatamente
+#        https://www.googleapis.com/auth/gmail.modify
+#      (dá leitura + criação/aplicação de labels; não permite apagar
+#      e-mails nem enviar em nome da conta).
+#   4. Salvar. Não tem tela de consentimento, não precisa ninguém logar —
+#      a autorização é feita pelo admin, de uma vez, pra essa Service
+#      Account específica.
+#
+# Depois disso, este script já funciona: ele usa as MESMAS Secrets do
+# dashboard (SHEETS_URL, gcp_service_account) — precisa rodar num ambiente
+# com acesso a elas (ex: `.streamlit/secrets.toml` local com as credenciais
+# de produção, ou as variáveis equivalentes no ambiente onde for hospedado).
 # =============================================================================
 
 import base64
@@ -52,8 +63,9 @@ import pdf_extractor
 # CONFIGURAÇÃO                                                                #
 # --------------------------------------------------------------------------- #
 
-CAMINHO_CREDENCIAIS = os.path.join(os.path.dirname(__file__), ".credenciais_gmail.json")
-CAMINHO_TOKEN        = os.path.join(os.path.dirname(__file__), ".token_gmail.json")
+# Caixa que o agente lê, "vestindo a identidade" dela via delegação de
+# domínio — não é uma conta separada com senha própria.
+CAIXA_DELEGADA = "exposicoeseprojetos@idg.org.br"
 
 # gmail.modify inclui leitura + criação/aplicação de labels (para marcar como
 # processado); não inclui apagar e-mails nem enviar em nome da conta.
@@ -75,34 +87,29 @@ LOGIN_AGENTE = "agente-email-pc"
 
 
 # --------------------------------------------------------------------------- #
-# AUTENTICAÇÃO GMAIL (OAuth — autorização única, renovação automática)        #
+# AUTENTICAÇÃO GMAIL — delegação de domínio, sem login interativo             #
 # --------------------------------------------------------------------------- #
 
 def _autenticar_gmail():
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    """
+    Usa a mesma Service Account do Sheets (st.secrets["gcp_service_account"]),
+    delegada para "vestir a identidade" da caixa CAIXA_DELEGADA. Só funciona
+    depois que o admin do Workspace autorizar essa Service Account em
+    Segurança → Controles de API → Delegação em todo o domínio (ver o
+    cabeçalho deste arquivo). Sem essa autorização, a chamada abaixo falha
+    com um erro claro de permissão — não é um bug do script.
+    """
+    from google.oauth2.service_account import Credentials
 
-    creds = None
-    if os.path.exists(CAMINHO_TOKEN):
-        creds = Credentials.from_authorized_user_file(CAMINHO_TOKEN, ESCOPOS_GMAIL)
+    if not hasattr(st, "secrets") or "gcp_service_account" not in st.secrets:
+        sys.exit("gcp_service_account não configurado nas Secrets — não é possível autenticar.")
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists(CAMINHO_CREDENCIAIS):
-                sys.exit(
-                    f"Faltam as credenciais OAuth em {CAMINHO_CREDENCIAIS}.\n"
-                    "Veja o passo a passo no topo deste arquivo."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(CAMINHO_CREDENCIAIS, ESCOPOS_GMAIL)
-            creds = flow.run_local_server(port=0)
-        with open(CAMINHO_TOKEN, "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
+    info = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(info, scopes=ESCOPOS_GMAIL)
+    creds_delegadas = creds.with_subject(CAIXA_DELEGADA)
 
     from googleapiclient.discovery import build
-    return build("gmail", "v1", credentials=creds)
+    return build("gmail", "v1", credentials=creds_delegadas)
 
 
 # --------------------------------------------------------------------------- #
