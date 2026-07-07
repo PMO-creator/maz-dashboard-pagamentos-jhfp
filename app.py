@@ -1661,6 +1661,40 @@ def _wizard_pedido(modo: str) -> None:
         ss["lanc_etapa"] = 1
         st.rerun(scope="fragment")
 
+    with st.expander("📄 Importar parcelas de PDF (pedido de compra e/ou contrato)", expanded=False):
+        st.caption(
+            "Sobe o contrato (ou o pedido) e as parcelas abaixo são substituídas "
+            "pelas que forem reconhecidas no documento — útil se você já passou "
+            "desta etapa sem ter anexado o arquivo antes."
+        )
+        _arquivos_ia_e2 = st.file_uploader(
+            "Documentos (PDF)", type=["pdf"], accept_multiple_files=True, key="upload_ia_doc_etapa2",
+        )
+        if st.button("✨ Extrair parcelas", key="btn_extrair_ia_etapa2", disabled=not _arquivos_ia_e2):
+            with st.spinner("Lendo o(s) documento(s)..."):
+                _extraidos_e2 = [
+                    _d for _arq in _arquivos_ia_e2
+                    if (_d := _extrair_dados_documento_ia(_arq.read()))
+                ]
+            _dados_ia_e2 = _mesclar_dados_extraidos(_extraidos_e2) if _extraidos_e2 else None
+            _parcelas_e2 = _dados_ia_e2.get("parcelas") if _dados_ia_e2 else None
+            if not _parcelas_e2:
+                st.warning("Nenhuma parcela reconhecida nesse(s) documento(s).")
+            else:
+                # Limpa as parcelas atuais (inclusive as adicionadas manualmente
+                # além das extraídas) antes de semear as novas.
+                for _k in list(ss.keys()):
+                    if _k.startswith("np_valor_") or _k.startswith("np_status_") or _k.startswith("np_doc_") or _k.startswith("np_data_"):
+                        del ss[_k]
+                ss["lanc_n_parcelas"] = len(_parcelas_e2)
+                for _i, _p in enumerate(_parcelas_e2):
+                    if _p.get("valor"):
+                        ss[f"np_valor_{_i}"] = float(_p["valor"])
+                    if _p.get("status") in dh.STATUS_TODOS:
+                        ss[f"np_status_{_i}"] = _p["status"]
+                st.success(f"{len(_parcelas_e2)} parcela(s) reconhecida(s) — confira abaixo antes de registrar.")
+                st.rerun(scope="fragment")
+
     n = ss["lanc_n_parcelas"]
     for i in range(n):
         rotulo = "Parcela única" if n == 1 else f"{i + 1}ª Parcela"
