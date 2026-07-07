@@ -7,6 +7,7 @@
 .dashboard_snapshot.json
 .dashboard_usuarios.json
 .dashboard_tema.json
+.dashboard_solicitacoes_acesso.json
 
 # Python
 __pycache__/

@@ -850,6 +850,18 @@ def kpi_card(valor: str, sub: str = "", classe: str = "folha",
 _OWNER_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
 _OWNER_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
 
+_PAPEL_LABEL = {
+    dh.PAPEL_OWNER:        "👑 Owner",
+    dh.PAPEL_ADMIN:        "🛠️ Admin",
+    dh.PAPEL_VIEWER:       "👁️ Viewer",
+    dh.PAPEL_REQUISITANTE: "🙋 Requisitante",
+}
+_PAPEL_DESCRICAO = {
+    dh.PAPEL_ADMIN:        "🛠️ Admin (edita configurações e lança direto)",
+    dh.PAPEL_VIEWER:       "👁️ Viewer (somente visualização)",
+    dh.PAPEL_REQUISITANTE: "🙋 Requisitante (solicita pedidos p/ aprovação)",
+}
+
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"]   = False
     st.session_state["papel"]         = None
@@ -901,6 +913,37 @@ if not st.session_state["autenticado"]:
             else:
                 st.error("Login ou senha incorretos.")
 
+        with st.expander("Ainda não tem acesso? Solicitar cadastro"):
+            st.caption(
+                "Preencha os dados abaixo — sua solicitação fica pendente até o "
+                "Owner aprovar. Não é possível se autocadastrar como Admin."
+            )
+            with st.form("form_solicitar_acesso", clear_on_submit=True):
+                sol_nome  = st.text_input("Nome de exibição")
+                sol_login = st.text_input("Login desejado")
+                sol_senha = st.text_input("Senha desejada", type="password")
+                sol_senha2 = st.text_input("Confirme a senha", type="password")
+                sol_papel = st.selectbox(
+                    "Papel desejado",
+                    options=dh.PAPEIS_AUTOCADASTRO,
+                    format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
+                )
+                sol_enviar = st.form_submit_button("📨 Enviar solicitação", use_container_width=True)
+
+            if sol_enviar:
+                if not sol_nome.strip():
+                    st.error("Informe seu nome de exibição.")
+                elif sol_senha != sol_senha2:
+                    st.error("As senhas não coincidem.")
+                elif sol_login.strip() == _OWNER_LOGIN:
+                    st.error("Este login já é o do Owner.")
+                else:
+                    erro = dh.criar_solicitacao_acesso(sol_login, sol_senha, sol_papel, sol_nome)
+                    if erro:
+                        st.error(erro)
+                    else:
+                        st.success("Solicitação enviada! Você poderá entrar assim que o Owner aprovar.")
+
     st.stop()
 
 # --------------------------------------------------------------------------- #
@@ -926,17 +969,6 @@ if st.session_state.pop("intro_pendente", False):
         _intro_placeholder.empty()
 
 _papel_usuario = st.session_state["papel"]
-_PAPEL_LABEL = {
-    dh.PAPEL_OWNER:        "👑 Owner",
-    dh.PAPEL_ADMIN:        "🛠️ Admin",
-    dh.PAPEL_VIEWER:       "👁️ Viewer",
-    dh.PAPEL_REQUISITANTE: "🙋 Requisitante",
-}
-_PAPEL_DESCRICAO = {
-    dh.PAPEL_ADMIN:        "🛠️ Admin (edita configurações e lança direto)",
-    dh.PAPEL_VIEWER:       "👁️ Viewer (somente visualização)",
-    dh.PAPEL_REQUISITANTE: "🙋 Requisitante (solicita pedidos p/ aprovação)",
-}
 
 
 # --------------------------------------------------------------------------- #
@@ -2859,6 +2891,31 @@ def _pagina_configuracoes():
                 dh.adicionar_usuario(novo_login, nova_senha, novo_papel, novo_nome)
                 st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
                 st.rerun()
+
+        # --- Solicitações de acesso pendentes (autocadastro na tela de login) ---
+        _pendentes_acesso = dh.carregar_solicitacoes_acesso()
+        if _pendentes_acesso:
+            st.markdown(f"**Solicitações de acesso pendentes ({len(_pendentes_acesso)})**")
+            for _s in _pendentes_acesso:
+                col_info, col_ok, col_no = st.columns([4, 1, 1])
+                with col_info:
+                    st.markdown(
+                        f"**{_s['nome']}**  \n"
+                        f"<span style='color:{C['ink_soft']};font-size:0.72rem;'>"
+                        f"{_s['login']} · pediu {_PAPEL_LABEL.get(_s['papel'], _s['papel'])}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with col_ok:
+                    if st.button("✅", key=f"aprova_acesso_{_s['login']}", help="Aprovar"):
+                        dh.aprovar_solicitacao_acesso(_s["login"])
+                        st.session_state["flash_ok"] = f"Usuário {_s['login']} aprovado como {_PAPEL_LABEL.get(_s['papel'], _s['papel'])}."
+                        st.rerun()
+                with col_no:
+                    if st.button("❌", key=f"rejeita_acesso_{_s['login']}", help="Rejeitar"):
+                        dh.rejeitar_solicitacao_acesso(_s["login"])
+                        st.session_state["flash_ok"] = f"Solicitação de {_s['login']} rejeitada."
+                        st.rerun()
+            st.divider()
 
         st.caption("Usuários cadastrados:")
         usuarios_cadastrados = dh.carregar_usuarios()

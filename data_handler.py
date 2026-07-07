@@ -51,20 +51,102 @@ def salvar_usuarios(usuarios: dict) -> None:
         json.dump(usuarios, f, ensure_ascii=False, indent=2)
 
 
-def adicionar_usuario(login: str, senha: str, papel: str, nome: str) -> None:
+def _adicionar_usuario_hash(login: str, senha_hash: str, papel: str, nome: str) -> None:
+    """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
+    (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
+    calculado no momento da solicitação; o Owner nunca vê a senha em texto)."""
     usuarios = carregar_usuarios()
     usuarios[login.strip()] = {
-        "senha_hash": _hash_senha(senha),
+        "senha_hash": senha_hash,
         "papel": papel,
         "nome": nome.strip() or login.strip(),
     }
     salvar_usuarios(usuarios)
 
 
+def adicionar_usuario(login: str, senha: str, papel: str, nome: str) -> None:
+    _adicionar_usuario_hash(login, _hash_senha(senha), papel, nome)
+
+
 def remover_usuario(login: str) -> None:
     usuarios = carregar_usuarios()
     usuarios.pop(login.strip(), None)
     salvar_usuarios(usuarios)
+
+
+# --------------------------------------------------------------------------- #
+# SOLICITAÇÕES DE ACESSO — autocadastro na tela de login, aprovado pelo Owner. #
+# A senha é hasheada já na solicitação: o Owner aprova o cadastro sem nunca   #
+# ver a senha em texto puro.                                                  #
+# --------------------------------------------------------------------------- #
+
+_SOLICITACOES_ACESSO_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_solicitacoes_acesso.json")
+
+# Papéis que uma pessoa pode pedir por autocadastro — Admin fica de fora de
+# propósito; só o Owner promove alguém a Admin, manualmente, depois.
+PAPEIS_AUTOCADASTRO = [PAPEL_VIEWER, PAPEL_REQUISITANTE]
+
+
+def carregar_solicitacoes_acesso() -> list[dict]:
+    try:
+        with open(_SOLICITACOES_ACESSO_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _salvar_solicitacoes_acesso(lista: list[dict]) -> None:
+    with open(_SOLICITACOES_ACESSO_FILE, "w", encoding="utf-8") as f:
+        json.dump(lista, f, ensure_ascii=False, indent=2)
+
+
+def criar_solicitacao_acesso(login: str, senha: str, papel: str, nome: str) -> str | None:
+    """
+    Registra um pedido de acesso pendente. Retorna None se deu certo, ou uma
+    mensagem de erro se o login já estiver em uso (pelo Owner, por um usuário
+    já cadastrado, ou por outra solicitação ainda não avaliada).
+    """
+    login = login.strip()
+    if not login or not senha:
+        return "Login e senha são obrigatórios."
+    if papel not in PAPEIS_AUTOCADASTRO:
+        return "Papel inválido para autocadastro."
+
+    usuarios = carregar_usuarios()
+    pendentes = carregar_solicitacoes_acesso()
+    if login in usuarios:
+        return "Este login já está cadastrado."
+    if any(s["login"] == login for s in pendentes):
+        return "Já existe uma solicitação pendente para este login."
+
+    pendentes.append({
+        "login": login,
+        "senha_hash": _hash_senha(senha),
+        "papel": papel,
+        "nome": nome.strip() or login,
+        "data_solicitacao": datetime.now().isoformat(),
+    })
+    _salvar_solicitacoes_acesso(pendentes)
+    return None
+
+
+def aprovar_solicitacao_acesso(login: str) -> None:
+    """Cadastra o usuário com o papel pedido (ou ajustado pelo Owner) e remove
+    a solicitação da fila."""
+    pendentes = carregar_solicitacoes_acesso()
+    solicitacao = next((s for s in pendentes if s["login"] == login), None)
+    if not solicitacao:
+        return
+    _adicionar_usuario_hash(
+        solicitacao["login"], solicitacao["senha_hash"],
+        solicitacao["papel"], solicitacao["nome"],
+    )
+    _salvar_solicitacoes_acesso([s for s in pendentes if s["login"] != login])
+
+
+def rejeitar_solicitacao_acesso(login: str) -> None:
+    pendentes = carregar_solicitacoes_acesso()
+    _salvar_solicitacoes_acesso([s for s in pendentes if s["login"] != login])
 
 
 def autenticar(login: str, senha: str, owner_login: str, owner_senha: str) -> dict | None:
