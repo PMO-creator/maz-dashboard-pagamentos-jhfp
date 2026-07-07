@@ -1,5 +1,7 @@
 # Credenciais — nunca subir para o GitHub
 .streamlit/secrets.toml
+.credenciais_gmail.json
+.token_gmail.json
 
 # Dados persistentes locais (config, log de alterações, usuários cadastrados)
 .dashboard_config.json

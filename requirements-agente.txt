@@ -1,0 +1,9 @@
+# Dependências extras do email_agent.py (agente de recebimento de Pedidos de
+# Compra por e-mail) — não são necessárias pro dashboard em si, por isso
+# ficam separadas do requirements.txt principal (que o Streamlit Cloud usa
+# pra fazer o deploy do app).
+#
+# Instalação: pip install -r requirements.txt -r requirements-agente.txt
+
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.100.0
