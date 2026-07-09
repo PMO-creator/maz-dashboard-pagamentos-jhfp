@@ -14,12 +14,14 @@
 # =============================================================================
 
 import html
+import io
 import json
 import os
 import re
 import time
 from datetime import datetime, timedelta
 
+import qrcode
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -627,6 +629,7 @@ _ICON_PATHS = {
     "dash":         '<path d="M5 12h14"/>',
     "link":         '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     "search":       '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+    "lock":         '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 }
 
 
@@ -740,6 +743,14 @@ def _val_date(v):
 
 
 @st.cache_data
+def _qr_image_bytes(uri: str) -> bytes:
+    """Gera um PNG do QR Code de uma URI otpauth:// pra escanear no app autenticador."""
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _logo_data_uri(nome_arquivo: str) -> str:
     """Carrega uma logo da pasta assets/ como data URI (cacheado). Retorna '' se ausente."""
     import base64
@@ -852,6 +863,9 @@ def kpi_card(valor: str, sub: str = "", classe: str = "folha",
 
 _OWNER_LOGIN = st.secrets.get("ADMIN_LOGIN", "") if hasattr(st, "secrets") else ""
 _OWNER_SENHA = st.secrets.get("ADMIN_SENHA", "") if hasattr(st, "secrets") else ""
+# Segredo de 2FA do Owner mora nas Secrets (não na planilha, como os demais
+# usuários) — o próprio Owner gera e cola manualmente em Configurações.
+_OWNER_TOTP_SECRET = st.secrets.get("ADMIN_TOTP_SECRET", "") if hasattr(st, "secrets") else ""
 
 _PAPEL_LABEL = {
     dh.PAPEL_OWNER:        "👑 Owner",
@@ -913,6 +927,33 @@ if not st.session_state["autenticado"]:
         unsafe_allow_html=True,
     )
 
+    _pendente_2fa = st.session_state.get("_2fa_pendente")
+
+    if _pendente_2fa:
+        # Segunda etapa: a senha já bateu, falta confirmar o código do
+        # aplicativo autenticador (Owner e Admins com 2FA ativado).
+        _, col_form, _ = st.columns([1, 1.2, 1])
+        with col_form:
+            st.info(f"Olá, {_pendente_2fa['nome']}. Confirme o código do seu aplicativo autenticador.")
+            with st.form("form_2fa"):
+                codigo_2fa = st.text_input("Código de 6 dígitos", max_chars=6, placeholder="000000")
+                confirmar_2fa = st.form_submit_button("Confirmar", use_container_width=True)
+            if confirmar_2fa:
+                if dh.verificar_totp(_pendente_2fa["totp_secret"], codigo_2fa):
+                    st.session_state["autenticado"]    = True
+                    st.session_state["papel"]          = _pendente_2fa["papel"]
+                    st.session_state["nome_usuario"]   = _pendente_2fa["nome"]
+                    st.session_state["login_usuario"]  = _pendente_2fa["login"]
+                    st.session_state["intro_pendente"] = True
+                    st.session_state.pop("_2fa_pendente", None)
+                    st.rerun()
+                else:
+                    st.error("Código inválido ou expirado — confira o horário do seu celular.")
+            if st.button("‹ Voltar pro login"):
+                st.session_state.pop("_2fa_pendente", None)
+                st.rerun()
+        st.stop()
+
     _, col_form, _ = st.columns([1, 1.2, 1])
     with col_form:
         with st.form("form_login"):
@@ -921,15 +962,29 @@ if not st.session_state["autenticado"]:
             entrar = st.form_submit_button("Entrar", use_container_width=True)
 
         if entrar:
-            resultado = dh.autenticar(sheets_url_input, login_input, senha_input, _OWNER_LOGIN, _OWNER_SENHA)
+            resultado = None
+            bloqueado = False
+            try:
+                resultado = dh.autenticar(
+                    sheets_url_input, login_input, senha_input,
+                    _OWNER_LOGIN, _OWNER_SENHA, _OWNER_TOTP_SECRET,
+                )
+            except dh.LoginBloqueadoError as e:
+                bloqueado = True
+                st.error(str(e))
+
             if resultado:
-                st.session_state["autenticado"]   = True
-                st.session_state["papel"]         = resultado["papel"]
-                st.session_state["nome_usuario"]  = resultado["nome"]
-                st.session_state["login_usuario"] = resultado["login"]
-                st.session_state["intro_pendente"] = True
-                st.rerun()
-            else:
+                if resultado.get("totp_secret"):
+                    st.session_state["_2fa_pendente"] = resultado
+                    st.rerun()
+                else:
+                    st.session_state["autenticado"]   = True
+                    st.session_state["papel"]         = resultado["papel"]
+                    st.session_state["nome_usuario"]  = resultado["nome"]
+                    st.session_state["login_usuario"] = resultado["login"]
+                    st.session_state["intro_pendente"] = True
+                    st.rerun()
+            elif not bloqueado:
                 st.error("Login ou senha incorretos.")
 
         with st.expander("Ainda não tem acesso? Solicitar cadastro"):
@@ -2619,6 +2674,70 @@ def _pagina_configuracoes():
         _salvar_config_persistente(novo_url, nova_aba)
         st.session_state["flash_ok"] = "Configurações salvas por 5 dias."
         st.rerun()
+
+    # --- Autenticação de dois fatores (2FA) — Owner e Admin, cada um pra si ---
+    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+        st.divider()
+        secao_titulo("Autenticação de dois fatores (2FA)", icone="lock")
+        st.caption(
+            "Exige um código do seu app autenticador (Google Authenticator, Authy etc.) "
+            "além da senha, pra dificultar invasão mesmo se a senha vazar."
+        )
+
+        if _papel_usuario == dh.PAPEL_OWNER:
+            if _OWNER_TOTP_SECRET:
+                st.success("✅ 2FA ativo pro Owner (segredo configurado nas Secrets).")
+            else:
+                st.warning("2FA ainda não ativado pro Owner.")
+                if st.button("🔐 Gerar segredo de 2FA"):
+                    st.session_state["_novo_totp_owner"] = dh.gerar_segredo_totp()
+                _segredo_gerado = st.session_state.get("_novo_totp_owner")
+                if _segredo_gerado:
+                    _uri = dh.obter_totp_uri(_segredo_gerado, _OWNER_LOGIN or "owner")
+                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
+                    st.code(_segredo_gerado, language=None)
+                    st.info(
+                        "Nas Secrets do Streamlit Cloud, adicione:\n\n"
+                        f"`ADMIN_TOTP_SECRET = \"{_segredo_gerado}\"`\n\n"
+                        "e salve — o app reinicia sozinho e o 2FA passa a valer no próximo login."
+                    )
+        else:
+            _usuarios_2fa = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
+            _meu_registro = _usuarios_2fa.get(st.session_state["login_usuario"], {})
+            _meu_totp = _meu_registro.get("totp_secret", "")
+
+            if _meu_totp:
+                st.success("✅ 2FA ativo na sua conta.")
+                with st.form("form_desativar_2fa"):
+                    codigo_desativar = st.text_input("Digite um código atual do app pra desativar", max_chars=6)
+                    desativar_2fa = st.form_submit_button("Desativar 2FA")
+                if desativar_2fa:
+                    if dh.verificar_totp(_meu_totp, codigo_desativar):
+                        dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], "")
+                        st.session_state["flash_ok"] = "2FA desativado."
+                        st.rerun()
+                    else:
+                        st.error("Código inválido.")
+            else:
+                st.warning("2FA ainda não ativado na sua conta.")
+                if st.button("🔐 Ativar 2FA"):
+                    st.session_state["_novo_totp_admin"] = dh.gerar_segredo_totp()
+                _segredo_admin = st.session_state.get("_novo_totp_admin")
+                if _segredo_admin:
+                    _uri = dh.obter_totp_uri(_segredo_admin, st.session_state["login_usuario"])
+                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
+                    st.code(_segredo_admin, language=None)
+                    with st.form("form_confirmar_2fa"):
+                        codigo_confirmar = st.text_input("Digite o código gerado pra confirmar", max_chars=6)
+                        confirmar_ativacao = st.form_submit_button("Confirmar e ativar")
+                    if confirmar_ativacao:
+                        if dh.verificar_totp(_segredo_admin, codigo_confirmar):
+                            dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], _segredo_admin)
+                            st.session_state.pop("_novo_totp_admin", None)
+                            st.session_state["flash_ok"] = "2FA ativado com sucesso."
+                            st.rerun()
+                        else:
+                            st.error("Código inválido — confira o horário do seu celular e tente de novo.")
 
     # --- Gerenciar Acessos — visível APENAS para o Owner ---
     if _papel_usuario == dh.PAPEL_OWNER:

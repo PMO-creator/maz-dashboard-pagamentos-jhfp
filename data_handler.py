@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 
 import gspread
 import pandas as pd
+import pyotp
 import streamlit as st
 
 
@@ -38,7 +39,7 @@ PAPEL_VIEWER       = "viewer"
 PAPEL_REQUISITANTE = "requisitante"
 
 _ABA_USUARIOS   = "_Usuarios"
-_HEADER_USUARIOS = ["login", "senha_hash", "papel", "nome"]
+_HEADER_USUARIOS = ["login", "senha_hash", "papel", "nome", "totp_secret"]
 
 _ABA_SOLICITACOES_ACESSO   = "_SolicitacoesAcesso"
 _HEADER_SOLICITACOES_ACESSO = ["login", "senha_hash", "papel", "nome", "data_solicitacao"]
@@ -46,6 +47,10 @@ _HEADER_SOLICITACOES_ACESSO = ["login", "senha_hash", "papel", "nome", "data_sol
 # Papéis que uma pessoa pode pedir por autocadastro — Admin fica de fora de
 # propósito; só o Owner promove alguém a Admin, manualmente, depois.
 PAPEIS_AUTOCADASTRO = [PAPEL_VIEWER, PAPEL_REQUISITANTE]
+
+
+class LoginBloqueadoError(Exception):
+    """Levantada quando um login excedeu o número de tentativas falhas recentes."""
 
 
 def _hash_senha(senha: str) -> str:
@@ -77,12 +82,15 @@ def _obter_aba_solicitacoes_acesso(sheets_url: str) -> gspread.Worksheet:
 
 
 def carregar_usuarios(sheets_url: str) -> dict:
-    """Retorna {login: {senha_hash, papel, nome}} dos usuários cadastrados (sem o Owner)."""
+    """Retorna {login: {senha_hash, papel, nome, totp_secret}} dos usuários cadastrados (sem o Owner)."""
     try:
         ws = _obter_aba_usuarios(sheets_url)
         linhas = ws.get_all_values()[1:]  # pula o cabeçalho
         return {
-            linha[0]: {"senha_hash": linha[1], "papel": linha[2], "nome": linha[3]}
+            linha[0]: {
+                "senha_hash": linha[1], "papel": linha[2], "nome": linha[3],
+                "totp_secret": linha[4] if len(linha) > 4 else "",
+            }
             for linha in linhas if linha and linha[0]
         }
     except Exception:
@@ -94,7 +102,7 @@ def salvar_usuarios(sheets_url: str, usuarios: dict) -> None:
     ws = _obter_aba_usuarios(sheets_url)
     ws.clear()
     linhas = [_HEADER_USUARIOS] + [
-        [login, dados["senha_hash"], dados["papel"], dados["nome"]]
+        [login, dados["senha_hash"], dados["papel"], dados["nome"], dados.get("totp_secret", "")]
         for login, dados in usuarios.items()
     ]
     ws.update(linhas, value_input_option="RAW")
@@ -103,14 +111,46 @@ def salvar_usuarios(sheets_url: str, usuarios: dict) -> None:
 def _adicionar_usuario_hash(sheets_url: str, login: str, senha_hash: str, papel: str, nome: str) -> None:
     """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
     (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
-    calculado no momento da solicitação; o Owner nunca vê a senha em texto)."""
+    calculado no momento da solicitação; o Owner nunca vê a senha em texto).
+    Preserva o segredo de 2FA se o login já existia (ex: Owner reaprovando
+    depois de rejeitar por engano)."""
     usuarios = carregar_usuarios(sheets_url)
-    usuarios[login.strip()] = {
+    login = login.strip()
+    totp_existente = usuarios.get(login, {}).get("totp_secret", "")
+    usuarios[login] = {
         "senha_hash": senha_hash,
         "papel": papel,
-        "nome": nome.strip() or login.strip(),
+        "nome": nome.strip() or login,
+        "totp_secret": totp_existente,
     }
     salvar_usuarios(sheets_url, usuarios)
+
+
+def definir_totp_usuario(sheets_url: str, login: str, secret: str) -> None:
+    """Ativa (secret não-vazio) ou desativa (secret == '') o 2FA de um usuário cadastrado."""
+    usuarios = carregar_usuarios(sheets_url)
+    login = login.strip()
+    if login not in usuarios:
+        return
+    usuarios[login]["totp_secret"] = secret
+    salvar_usuarios(sheets_url, usuarios)
+
+
+def gerar_segredo_totp() -> str:
+    return pyotp.random_base32()
+
+
+def obter_totp_uri(secret: str, login: str) -> str:
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=login, issuer_name="MAZ Dashboard")
+
+
+def verificar_totp(secret: str, codigo: str) -> bool:
+    if not secret or not codigo:
+        return False
+    try:
+        return pyotp.totp.TOTP(secret).verify(codigo.strip(), valid_window=1)
+    except Exception:
+        return False
 
 
 def adicionar_usuario(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> None:
@@ -201,15 +241,91 @@ def rejeitar_solicitacao_acesso(sheets_url: str, login: str) -> None:
     _salvar_solicitacoes_acesso(sheets_url, [s for s in pendentes if s["login"] != login])
 
 
-def autenticar(sheets_url: str, login: str, senha: str, owner_login: str, owner_senha: str) -> dict | None:
+# --------------------------------------------------------------------------- #
+# BLOQUEIO POR TENTATIVAS — protege contra força bruta de senha.              #
+# Persistido na planilha (não em disco/sessão) porque um atacante pode        #
+# simplesmente abrir uma sessão nova a cada tentativa — bloquear por login,   #
+# de forma global, é o que realmente freia um ataque automatizado.            #
+# --------------------------------------------------------------------------- #
+
+_ABA_TENTATIVAS_LOGIN   = "_TentativasLogin"
+_HEADER_TENTATIVAS_LOGIN = ["login", "timestamp"]
+
+LOGIN_MAX_TENTATIVAS  = 5
+LOGIN_JANELA_MINUTOS  = 15
+
+
+def _obter_aba_tentativas(sheets_url: str) -> gspread.Worksheet:
+    planilha = _abrir_planilha(sheets_url)
+    try:
+        return planilha.worksheet(_ABA_TENTATIVAS_LOGIN)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = planilha.add_worksheet(
+            title=_ABA_TENTATIVAS_LOGIN, rows=200, cols=len(_HEADER_TENTATIVAS_LOGIN),
+        )
+        ws.append_row(_HEADER_TENTATIVAS_LOGIN, value_input_option="RAW")
+        return ws
+
+
+def _tentativas_recentes(sheets_url: str, login: str) -> list[datetime]:
+    """Lê as tentativas falhas do login nos últimos LOGIN_JANELA_MINUTOS minutos
+    (e aproveita a leitura pra descartar linhas antigas de QUALQUER login, o
+    que evita a aba crescer pra sempre sem precisar de um job separado)."""
+    limite = datetime.now() - timedelta(minutes=LOGIN_JANELA_MINUTOS)
+    ws = _obter_aba_tentativas(sheets_url)
+    linhas = ws.get_all_values()[1:]
+
+    validas = []
+    for l in linhas:
+        if not l or not l[0]:
+            continue
+        try:
+            ts = datetime.fromisoformat(l[1])
+        except Exception:
+            continue
+        if ts >= limite:
+            validas.append((l[0], ts))
+
+    if len(validas) != len([l for l in linhas if l and l[0]]):
+        novas_linhas = [_HEADER_TENTATIVAS_LOGIN] + [[lg, ts.isoformat()] for lg, ts in validas]
+        ws.clear()
+        ws.update(novas_linhas, value_input_option="RAW")
+
+    return [ts for lg, ts in validas if lg == login]
+
+
+def _registrar_tentativa_falha(sheets_url: str, login: str) -> None:
+    ws = _obter_aba_tentativas(sheets_url)
+    ws.append_row([login, datetime.now().isoformat()], value_input_option="RAW")
+
+
+def autenticar(
+    sheets_url: str, login: str, senha: str,
+    owner_login: str, owner_senha: str, owner_totp_secret: str = "",
+) -> dict | None:
     """
     Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (planilha).
-    Retorna {"papel": ..., "nome": ..., "login": ...} se autenticado, senão None.
+    Retorna {"papel", "nome", "login", "totp_secret"} se a senha bateu, ou None se
+    errou. Levanta LoginBloqueadoError se o login excedeu as tentativas recentes.
+    O retorno não confirma a sessão sozinho quando há totp_secret — o chamador
+    ainda precisa validar o código de 2FA antes de autenticar de fato.
     """
     login = login.strip()
 
+    if sheets_url:
+        try:
+            if len(_tentativas_recentes(sheets_url, login)) >= LOGIN_MAX_TENTATIVAS:
+                raise LoginBloqueadoError(
+                    f"Muitas tentativas de login com esse usuário. "
+                    f"Aguarde {LOGIN_JANELA_MINUTOS} minutos e tente novamente."
+                )
+        except LoginBloqueadoError:
+            raise
+        except Exception:
+            pass  # falha ao checar tentativas não deve travar o login em si
+
     if owner_login and login == owner_login and senha == owner_senha:
-        return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login}
+        return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login, "totp_secret": owner_totp_secret}
 
     if not sheets_url:
         return None
@@ -217,7 +333,17 @@ def autenticar(sheets_url: str, login: str, senha: str, owner_login: str, owner_
     usuarios = carregar_usuarios(sheets_url)
     registro = usuarios.get(login)
     if registro and registro.get("senha_hash") == _hash_senha(senha):
-        return {"papel": registro.get("papel", PAPEL_VIEWER), "nome": registro.get("nome", login), "login": login}
+        return {
+            "papel": registro.get("papel", PAPEL_VIEWER),
+            "nome": registro.get("nome", login),
+            "login": login,
+            "totp_secret": registro.get("totp_secret", ""),
+        }
+
+    try:
+        _registrar_tentativa_falha(sheets_url, login)
+    except Exception:
+        pass  # não deixa uma falha de escrita mascarar o "senha incorreta"
 
     return None
 
