@@ -22,85 +22,137 @@ import streamlit as st
 # --------------------------------------------------------------------------- #
 # GESTÃO DE ACESSOS — Owner / Admin / Viewer                                   #
 # O Owner vem das Secrets do Streamlit (login fixo, não editável pela UI).    #
-# Admins e Viewers são cadastrados pelo Owner e persistidos em disco.         #
+# Admins, Viewers e Requisitantes são cadastrados pelo Owner (ou por          #
+# autocadastro aprovado) e persistidos na PRÓPRIA PLANILHA — nunca em disco.  #
+# O disco local do Streamlit Community Cloud é efêmero: qualquer redeploy,    #
+# reinício por inatividade ou alteração de Secrets recria o container do     #
+# zero e apaga tudo que não estiver versionado no Git ou salvo na planilha.  #
+# Um arquivo local (.dashboard_usuarios.json) já causou perda de cadastros    #
+# dessa forma — por isso a fonte de verdade agora é a planilha, do mesmo     #
+# jeito que já era feito com Aprovações.                                     #
 # --------------------------------------------------------------------------- #
-
-_USUARIOS_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_usuarios.json")
 
 PAPEL_OWNER        = "owner"
 PAPEL_ADMIN        = "admin"
 PAPEL_VIEWER       = "viewer"
 PAPEL_REQUISITANTE = "requisitante"
 
+_ABA_USUARIOS   = "_Usuarios"
+_HEADER_USUARIOS = ["login", "senha_hash", "papel", "nome"]
 
-def _hash_senha(senha: str) -> str:
-    return hashlib.sha256(senha.encode("utf-8")).hexdigest()
-
-
-def carregar_usuarios() -> dict:
-    """Retorna {login: {senha_hash, papel, nome}} dos usuários cadastrados (sem o Owner)."""
-    try:
-        with open(_USUARIOS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def salvar_usuarios(usuarios: dict) -> None:
-    with open(_USUARIOS_FILE, "w", encoding="utf-8") as f:
-        json.dump(usuarios, f, ensure_ascii=False, indent=2)
-
-
-def _adicionar_usuario_hash(login: str, senha_hash: str, papel: str, nome: str) -> None:
-    """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
-    (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
-    calculado no momento da solicitação; o Owner nunca vê a senha em texto)."""
-    usuarios = carregar_usuarios()
-    usuarios[login.strip()] = {
-        "senha_hash": senha_hash,
-        "papel": papel,
-        "nome": nome.strip() or login.strip(),
-    }
-    salvar_usuarios(usuarios)
-
-
-def adicionar_usuario(login: str, senha: str, papel: str, nome: str) -> None:
-    _adicionar_usuario_hash(login, _hash_senha(senha), papel, nome)
-
-
-def remover_usuario(login: str) -> None:
-    usuarios = carregar_usuarios()
-    usuarios.pop(login.strip(), None)
-    salvar_usuarios(usuarios)
-
-
-# --------------------------------------------------------------------------- #
-# SOLICITAÇÕES DE ACESSO — autocadastro na tela de login, aprovado pelo Owner. #
-# A senha é hasheada já na solicitação: o Owner aprova o cadastro sem nunca   #
-# ver a senha em texto puro.                                                  #
-# --------------------------------------------------------------------------- #
-
-_SOLICITACOES_ACESSO_FILE = os.path.join(os.path.dirname(__file__), ".dashboard_solicitacoes_acesso.json")
+_ABA_SOLICITACOES_ACESSO   = "_SolicitacoesAcesso"
+_HEADER_SOLICITACOES_ACESSO = ["login", "senha_hash", "papel", "nome", "data_solicitacao"]
 
 # Papéis que uma pessoa pode pedir por autocadastro — Admin fica de fora de
 # propósito; só o Owner promove alguém a Admin, manualmente, depois.
 PAPEIS_AUTOCADASTRO = [PAPEL_VIEWER, PAPEL_REQUISITANTE]
 
 
-def carregar_solicitacoes_acesso() -> list[dict]:
+def _hash_senha(senha: str) -> str:
+    return hashlib.sha256(senha.encode("utf-8")).hexdigest()
+
+
+def _obter_aba_usuarios(sheets_url: str) -> gspread.Worksheet:
+    """Abre a aba de usuários cadastrados; cria com o cabeçalho padrão na 1ª vez."""
+    planilha = _abrir_planilha(sheets_url)
     try:
-        with open(_SOLICITACOES_ACESSO_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return planilha.worksheet(_ABA_USUARIOS)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = planilha.add_worksheet(title=_ABA_USUARIOS, rows=100, cols=len(_HEADER_USUARIOS))
+        ws.append_row(_HEADER_USUARIOS, value_input_option="RAW")
+        return ws
+
+
+def _obter_aba_solicitacoes_acesso(sheets_url: str) -> gspread.Worksheet:
+    """Abre a aba de solicitações de acesso pendentes; cria na 1ª vez."""
+    planilha = _abrir_planilha(sheets_url)
+    try:
+        return planilha.worksheet(_ABA_SOLICITACOES_ACESSO)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = planilha.add_worksheet(
+            title=_ABA_SOLICITACOES_ACESSO, rows=100, cols=len(_HEADER_SOLICITACOES_ACESSO),
+        )
+        ws.append_row(_HEADER_SOLICITACOES_ACESSO, value_input_option="RAW")
+        return ws
+
+
+def carregar_usuarios(sheets_url: str) -> dict:
+    """Retorna {login: {senha_hash, papel, nome}} dos usuários cadastrados (sem o Owner)."""
+    try:
+        ws = _obter_aba_usuarios(sheets_url)
+        linhas = ws.get_all_values()[1:]  # pula o cabeçalho
+        return {
+            linha[0]: {"senha_hash": linha[1], "papel": linha[2], "nome": linha[3]}
+            for linha in linhas if linha and linha[0]
+        }
+    except Exception:
+        return {}
+
+
+def salvar_usuarios(sheets_url: str, usuarios: dict) -> None:
+    """Reescreve a aba de usuários por completo a partir do dicionário em memória."""
+    ws = _obter_aba_usuarios(sheets_url)
+    ws.clear()
+    linhas = [_HEADER_USUARIOS] + [
+        [login, dados["senha_hash"], dados["papel"], dados["nome"]]
+        for login, dados in usuarios.items()
+    ]
+    ws.update(linhas, value_input_option="RAW")
+
+
+def _adicionar_usuario_hash(sheets_url: str, login: str, senha_hash: str, papel: str, nome: str) -> None:
+    """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
+    (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
+    calculado no momento da solicitação; o Owner nunca vê a senha em texto)."""
+    usuarios = carregar_usuarios(sheets_url)
+    usuarios[login.strip()] = {
+        "senha_hash": senha_hash,
+        "papel": papel,
+        "nome": nome.strip() or login.strip(),
+    }
+    salvar_usuarios(sheets_url, usuarios)
+
+
+def adicionar_usuario(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> None:
+    _adicionar_usuario_hash(sheets_url, login, _hash_senha(senha), papel, nome)
+
+
+def remover_usuario(sheets_url: str, login: str) -> None:
+    usuarios = carregar_usuarios(sheets_url)
+    usuarios.pop(login.strip(), None)
+    salvar_usuarios(sheets_url, usuarios)
+
+
+# --------------------------------------------------------------------------- #
+# SOLICITAÇÕES DE ACESSO — autocadastro na tela de login, aprovado pelo Owner. #
+# A senha é hasheada já na solicitação: o Owner aprova o cadastro sem nunca   #
+# ver a senha em texto puro. Também persistido na planilha (mesmo motivo).   #
+# --------------------------------------------------------------------------- #
+
+def carregar_solicitacoes_acesso(sheets_url: str) -> list[dict]:
+    try:
+        ws = _obter_aba_solicitacoes_acesso(sheets_url)
+        linhas = ws.get_all_values()[1:]
+        return [
+            {"login": l[0], "senha_hash": l[1], "papel": l[2], "nome": l[3],
+             "data_solicitacao": l[4] if len(l) > 4 else ""}
+            for l in linhas if l and l[0]
+        ]
     except Exception:
         return []
 
 
-def _salvar_solicitacoes_acesso(lista: list[dict]) -> None:
-    with open(_SOLICITACOES_ACESSO_FILE, "w", encoding="utf-8") as f:
-        json.dump(lista, f, ensure_ascii=False, indent=2)
+def _salvar_solicitacoes_acesso(sheets_url: str, lista: list[dict]) -> None:
+    ws = _obter_aba_solicitacoes_acesso(sheets_url)
+    ws.clear()
+    linhas = [_HEADER_SOLICITACOES_ACESSO] + [
+        [s["login"], s["senha_hash"], s["papel"], s["nome"], s.get("data_solicitacao", "")]
+        for s in lista
+    ]
+    ws.update(linhas, value_input_option="RAW")
 
 
-def criar_solicitacao_acesso(login: str, senha: str, papel: str, nome: str) -> str | None:
+def criar_solicitacao_acesso(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> str | None:
     """
     Registra um pedido de acesso pendente. Retorna None se deu certo, ou uma
     mensagem de erro se o login já estiver em uso (pelo Owner, por um usuário
@@ -112,8 +164,8 @@ def criar_solicitacao_acesso(login: str, senha: str, papel: str, nome: str) -> s
     if papel not in PAPEIS_AUTOCADASTRO:
         return "Papel inválido para autocadastro."
 
-    usuarios = carregar_usuarios()
-    pendentes = carregar_solicitacoes_acesso()
+    usuarios = carregar_usuarios(sheets_url)
+    pendentes = carregar_solicitacoes_acesso(sheets_url)
     if login in usuarios:
         return "Este login já está cadastrado."
     if any(s["login"] == login for s in pendentes):
@@ -126,32 +178,32 @@ def criar_solicitacao_acesso(login: str, senha: str, papel: str, nome: str) -> s
         "nome": nome.strip() or login,
         "data_solicitacao": datetime.now().isoformat(),
     })
-    _salvar_solicitacoes_acesso(pendentes)
+    _salvar_solicitacoes_acesso(sheets_url, pendentes)
     return None
 
 
-def aprovar_solicitacao_acesso(login: str) -> None:
+def aprovar_solicitacao_acesso(sheets_url: str, login: str) -> None:
     """Cadastra o usuário com o papel pedido (ou ajustado pelo Owner) e remove
     a solicitação da fila."""
-    pendentes = carregar_solicitacoes_acesso()
+    pendentes = carregar_solicitacoes_acesso(sheets_url)
     solicitacao = next((s for s in pendentes if s["login"] == login), None)
     if not solicitacao:
         return
     _adicionar_usuario_hash(
-        solicitacao["login"], solicitacao["senha_hash"],
+        sheets_url, solicitacao["login"], solicitacao["senha_hash"],
         solicitacao["papel"], solicitacao["nome"],
     )
-    _salvar_solicitacoes_acesso([s for s in pendentes if s["login"] != login])
+    _salvar_solicitacoes_acesso(sheets_url, [s for s in pendentes if s["login"] != login])
 
 
-def rejeitar_solicitacao_acesso(login: str) -> None:
-    pendentes = carregar_solicitacoes_acesso()
-    _salvar_solicitacoes_acesso([s for s in pendentes if s["login"] != login])
+def rejeitar_solicitacao_acesso(sheets_url: str, login: str) -> None:
+    pendentes = carregar_solicitacoes_acesso(sheets_url)
+    _salvar_solicitacoes_acesso(sheets_url, [s for s in pendentes if s["login"] != login])
 
 
-def autenticar(login: str, senha: str, owner_login: str, owner_senha: str) -> dict | None:
+def autenticar(sheets_url: str, login: str, senha: str, owner_login: str, owner_senha: str) -> dict | None:
     """
-    Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (disco).
+    Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (planilha).
     Retorna {"papel": ..., "nome": ..., "login": ...} se autenticado, senão None.
     """
     login = login.strip()
@@ -159,7 +211,10 @@ def autenticar(login: str, senha: str, owner_login: str, owner_senha: str) -> di
     if owner_login and login == owner_login and senha == owner_senha:
         return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login}
 
-    usuarios = carregar_usuarios()
+    if not sheets_url:
+        return None
+
+    usuarios = carregar_usuarios(sheets_url)
     registro = usuarios.get(login)
     if registro and registro.get("senha_hash") == _hash_senha(senha):
         return {"papel": registro.get("papel", PAPEL_VIEWER), "nome": registro.get("nome", login), "login": login}

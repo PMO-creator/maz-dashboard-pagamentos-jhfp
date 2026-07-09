@@ -871,6 +871,22 @@ if "autenticado" not in st.session_state:
     st.session_state["nome_usuario"]  = None
     st.session_state["login_usuario"] = None
 
+# --------------------------------------------------------------------------- #
+# Fonte de dados — resolvida ANTES do login: usuários e solicitações de       #
+# acesso agora moram na própria planilha (não mais em disco, que é efêmero   #
+# no Streamlit Community Cloud), então já precisamos da URL aqui pra permitir #
+# login de Admin/Viewer/Requisitante e o autocadastro na tela de login.       #
+# Prioridade: 1) Arquivo local (5 dias, editável em Configurações)            #
+#             2) Secrets (valor inicial, antes da 1ª configuração)            #
+#             3) Vazio                                                       #
+# --------------------------------------------------------------------------- #
+_url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
+_aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
+_cfg_disk    = _ler_config_persistente()
+
+sheets_url_input = _cfg_disk.get("sheets_url", "") or _url_secrets
+nome_aba_input   = _cfg_disk.get("sheets_aba", "") or _aba_secrets
+
 if not st.session_state["autenticado"]:
     _logo_login = _logo_data_uri("logo_vertical.png")
     _img_html = (
@@ -905,7 +921,7 @@ if not st.session_state["autenticado"]:
             entrar = st.form_submit_button("Entrar", use_container_width=True)
 
         if entrar:
-            resultado = dh.autenticar(login_input, senha_input, _OWNER_LOGIN, _OWNER_SENHA)
+            resultado = dh.autenticar(sheets_url_input, login_input, senha_input, _OWNER_LOGIN, _OWNER_SENHA)
             if resultado:
                 st.session_state["autenticado"]   = True
                 st.session_state["papel"]         = resultado["papel"]
@@ -940,8 +956,13 @@ if not st.session_state["autenticado"]:
                     st.error("As senhas não coincidem.")
                 elif sol_login.strip() == _OWNER_LOGIN:
                     st.error("Este login já é o do Owner.")
+                elif not sheets_url_input:
+                    st.error("Fonte de dados ainda não configurada — peça ao Owner pra configurar antes.")
                 else:
-                    erro = dh.criar_solicitacao_acesso(sol_login, sol_senha, sol_papel, sol_nome)
+                    try:
+                        erro = dh.criar_solicitacao_acesso(sheets_url_input, sol_login, sol_senha, sol_papel, sol_nome)
+                    except Exception as e:
+                        erro = f"Não foi possível gravar na planilha. Detalhe técnico: `{e}`"
                     if erro:
                         st.error(erro)
                     else:
@@ -973,21 +994,7 @@ if st.session_state.pop("intro_pendente", False):
 
 _papel_usuario = st.session_state["papel"]
 
-
-# --------------------------------------------------------------------------- #
-# Fonte de dados — carregada aqui (antes do cabeçalho) para que o sininho de   #
-# aprovações pendentes, no topo, já tenha a contagem real disponível.         #
-# Prioridade: 1) Arquivo local (5 dias, editável em Configurações)             #
-#             2) Secrets (valor inicial, antes da 1ª configuração)             #
-#             3) Vazio                                                        #
-# --------------------------------------------------------------------------- #
-_url_secrets = st.secrets.get("SHEETS_URL", "") if hasattr(st, "secrets") else ""
-_aba_secrets = st.secrets.get("SHEETS_ABA", "") if hasattr(st, "secrets") else ""
-_cfg_disk    = _ler_config_persistente()
-
-sheets_url_input = _cfg_disk.get("sheets_url", "") or _url_secrets
-nome_aba_input   = _cfg_disk.get("sheets_aba", "") or _aba_secrets
-
+# sheets_url_input / nome_aba_input já foram resolvidos antes do login (acima).
 _n_pendentes_header = 0
 if _papel_usuario == dh.PAPEL_OWNER and sheets_url_input and "gcp_service_account" in st.secrets:
     try:
@@ -2631,17 +2638,22 @@ def _pagina_configuracoes():
             cadastrar = st.form_submit_button("➕ Cadastrar")
 
         if cadastrar:
-            if not novo_login.strip() or not nova_senha:
+            if not sheets_url_input:
+                st.error("Configure a fonte de dados (acima) antes de cadastrar usuários.")
+            elif not novo_login.strip() or not nova_senha:
                 st.error("Login e senha são obrigatórios.")
             elif novo_login.strip() == _OWNER_LOGIN:
                 st.error("Este login já é o do Owner.")
             else:
-                dh.adicionar_usuario(novo_login, nova_senha, novo_papel, novo_nome)
-                st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
-                st.rerun()
+                try:
+                    dh.adicionar_usuario(sheets_url_input, novo_login, nova_senha, novo_papel, novo_nome)
+                    st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
         # --- Solicitações de acesso pendentes (autocadastro na tela de login) ---
-        _pendentes_acesso = dh.carregar_solicitacoes_acesso()
+        _pendentes_acesso = dh.carregar_solicitacoes_acesso(sheets_url_input) if sheets_url_input else []
         if _pendentes_acesso:
             st.markdown(f"**Solicitações de acesso pendentes ({len(_pendentes_acesso)})**")
             for _s in _pendentes_acesso:
@@ -2655,18 +2667,24 @@ def _pagina_configuracoes():
                     )
                 with col_ok:
                     if st.button("✅", key=f"aprova_acesso_{_s['login']}", help="Aprovar"):
-                        dh.aprovar_solicitacao_acesso(_s["login"])
-                        st.session_state["flash_ok"] = f"Usuário {_s['login']} aprovado como {_PAPEL_LABEL.get(_s['papel'], _s['papel'])}."
-                        st.rerun()
+                        try:
+                            dh.aprovar_solicitacao_acesso(sheets_url_input, _s["login"])
+                            st.session_state["flash_ok"] = f"Usuário {_s['login']} aprovado como {_PAPEL_LABEL.get(_s['papel'], _s['papel'])}."
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
                 with col_no:
                     if st.button("❌", key=f"rejeita_acesso_{_s['login']}", help="Rejeitar"):
-                        dh.rejeitar_solicitacao_acesso(_s["login"])
-                        st.session_state["flash_ok"] = f"Solicitação de {_s['login']} rejeitada."
-                        st.rerun()
+                        try:
+                            dh.rejeitar_solicitacao_acesso(sheets_url_input, _s["login"])
+                            st.session_state["flash_ok"] = f"Solicitação de {_s['login']} rejeitada."
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
             st.divider()
 
         st.caption("Usuários cadastrados:")
-        usuarios_cadastrados = dh.carregar_usuarios()
+        usuarios_cadastrados = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
         if not usuarios_cadastrados:
             st.caption("Nenhum administrador ou viewer cadastrado ainda.")
         else:
@@ -2681,8 +2699,11 @@ def _pagina_configuracoes():
                     )
                 with col_del:
                     if st.button("🗑️", key=f"del_{login_u}", help=f"Remover {login_u}"):
-                        dh.remover_usuario(login_u)
-                        st.rerun()
+                        try:
+                            dh.remover_usuario(sheets_url_input, login_u)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
     # --- Log de Alterações — Owner e Admin ---
     st.divider()

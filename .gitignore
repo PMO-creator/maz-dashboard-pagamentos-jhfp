@@ -1,13 +1,13 @@
 # Credenciais — nunca subir para o GitHub
 .streamlit/secrets.toml
 
-# Dados persistentes locais (config, log de alterações, usuários cadastrados)
+# Dados persistentes locais — só o que é de baixo risco (cache/preferência de
+# tema) continua em disco. Usuários e solicitações de acesso agora moram na
+# planilha (ver data_handler.py), justamente porque o disco é efêmero.
 .dashboard_config.json
 .dashboard_changelog.json
 .dashboard_snapshot.json
-.dashboard_usuarios.json
 .dashboard_tema.json
-.dashboard_solicitacoes_acesso.json
 
 # Python
 __pycache__/
