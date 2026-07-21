@@ -1743,6 +1743,23 @@ def _tabela_pagamentos_kpi(d):
     st.dataframe(pd.DataFrame(cols), use_container_width=True, hide_index=True)
 
 
+def _tabela_atrasos_kpi(lista: list[dict]):
+    """Tabela de parcelas com possível atraso de NF para o modal do KPI."""
+    if not lista:
+        st.caption("Nenhuma parcela nessa condição no momento.")
+        return
+    df_at = pd.DataFrame(lista)
+    cols = {
+        "Fornecedor":       df_at["fornecedor"].astype(str),
+        "Parcela paga":     df_at["descritivo_parcela"].apply(lambda x: _val_txt(x) or "—"),
+        "Aguardando NF de": df_at["descritivo_proxima"].apply(lambda x: _val_txt(x) or "—"),
+        "Pago em":          df_at["data_pgto_anterior"].apply(lambda x: _fmt(x, "data")),
+        "Dias sem NF":      df_at["dias_desde_pagamento"],
+        "Valor da próxima": df_at["valor_proxima"].apply(fmt_brl),
+    }
+    st.dataframe(pd.DataFrame(cols), use_container_width=True, hide_index=True)
+
+
 def _tabela_contratos_kpi(d):
     """Tabela de contratos (compras) para o modal de detalhe de um KPI."""
     if d is None or d.empty:
@@ -1780,6 +1797,9 @@ def _dialog_kpi_detalhe(qual: str):
         st.markdown(f"**Contratos vencidos** &nbsp;·&nbsp; {kpis['vencidos']} contrato(s)")
         _d = df_compras[df_compras["prazo_status"] == dh.PRAZO_VENCIDO] if "prazo_status" in df_compras.columns else None
         _tabela_contratos_kpi(_d)
+    elif qual == "atraso_nf":
+        st.markdown(f"**Parcelas com possível atraso de NF** &nbsp;·&nbsp; {len(parcelas_atrasadas)} parcela(s)")
+        _tabela_atrasos_kpi(parcelas_atrasadas)
 
 
 def _botao_detalhe(qual: str, key: str):
@@ -1862,6 +1882,17 @@ def _secao_indicadores():
             sub=f"{kpis['fornecedores']} fornecedores ativos",
             classe="rio", icone=svg_icon("trend_up", cor=C["rio"]),
         ), unsafe_allow_html=True)
+
+    with _row2[3]:
+        _n_atr = len(parcelas_atrasadas)
+        st.markdown(kpi_card(
+            str(_n_atr),
+            sub="Parcelas com possível atraso de NF",
+            classe="sol" if _n_atr > 0 else "folha", icone=svg_icon("alert_tri", cor=C["sol_texto"] if _n_atr > 0 else C["folha"]),
+            pill_texto=f"{_dias_alerta_parcela}+ dias" if _n_atr > 0 else "ok",
+            pill_classe="sol" if _n_atr > 0 else "folha",
+        ), unsafe_allow_html=True)
+        _botao_detalhe("atraso_nf", "kpi_det_atraso_nf")
 
     # Barra de progresso da execução orçamentária
     pct = min(kpis["perc_execucao"], 100)
