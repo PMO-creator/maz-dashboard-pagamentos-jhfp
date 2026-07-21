@@ -21,20 +21,16 @@ import streamlit as st
 
 
 # --------------------------------------------------------------------------- #
-# GESTÃO DE ACESSOS — Owner / Admin / Viewer / Requisitante                    #
-# O Owner é a única conta com senha própria (vem das Secrets do Streamlit,    #
-# login fixo, não editável pela UI) — mantém 2FA opcional como reforço.      #
-# Todo o resto da equipe entra por "Entrar com Google", restrito ao domínio  #
-# corporativo (@idg.org.br): a autenticação em si é inteiramente do Google,  #
-# nós só guardamos qual PAPEL cada e-mail já aprovado tem. Sem senha própria #
-# pra essas contas — nada pra vazar, adivinhar ou reutilizar nesse ponto.    #
-# Cadastros e solicitações persistem na PRÓPRIA PLANILHA — nunca em disco.   #
+# GESTÃO DE ACESSOS — Owner / Admin / Viewer                                   #
+# O Owner vem das Secrets do Streamlit (login fixo, não editável pela UI).    #
+# Admins, Viewers e Requisitantes são cadastrados pelo Owner (ou por          #
+# autocadastro aprovado) e persistidos na PRÓPRIA PLANILHA — nunca em disco.  #
 # O disco local do Streamlit Community Cloud é efêmero: qualquer redeploy,    #
 # reinício por inatividade ou alteração de Secrets recria o container do     #
 # zero e apaga tudo que não estiver versionado no Git ou salvo na planilha.  #
 # Um arquivo local (.dashboard_usuarios.json) já causou perda de cadastros    #
-# dessa forma — por isso a fonte de verdade é a planilha, do mesmo jeito     #
-# que já era feito com Aprovações.                                           #
+# dessa forma — por isso a fonte de verdade agora é a planilha, do mesmo     #
+# jeito que já era feito com Aprovações.                                     #
 # --------------------------------------------------------------------------- #
 
 PAPEL_OWNER        = "owner"
@@ -42,32 +38,23 @@ PAPEL_ADMIN        = "admin"
 PAPEL_VIEWER       = "viewer"
 PAPEL_REQUISITANTE = "requisitante"
 
-# Domínio corporativo do Google Workspace — só e-mails desse domínio, com
-# email_verified=True no token do Google, podem virar sessão autenticada.
-DOMINIO_CORPORATIVO = "idg.org.br"
-
 _ABA_USUARIOS   = "_Usuarios"
-_HEADER_USUARIOS = ["login", "papel", "nome"]  # "login" == e-mail @idg.org.br verificado pelo Google
+_HEADER_USUARIOS = ["login", "senha_hash", "papel", "nome", "totp_secret"]
 
 _ABA_SOLICITACOES_ACESSO   = "_SolicitacoesAcesso"
-_HEADER_SOLICITACOES_ACESSO = ["login", "papel", "nome", "data_solicitacao"]
+_HEADER_SOLICITACOES_ACESSO = ["login", "senha_hash", "papel", "nome", "data_solicitacao"]
 
-# Papéis que uma pessoa pode pedir por autocadastro (depois de já ter provado
-# a identidade @idg.org.br via Google) — Admin fica de fora de propósito; só
-# o Owner promove alguém a Admin, manualmente, depois.
+# Papéis que uma pessoa pode pedir por autocadastro — Admin fica de fora de
+# propósito; só o Owner promove alguém a Admin, manualmente, depois.
 PAPEIS_AUTOCADASTRO = [PAPEL_VIEWER, PAPEL_REQUISITANTE]
 
 
 class LoginBloqueadoError(Exception):
-    """Levantada quando o login do Owner excedeu o número de tentativas falhas recentes."""
+    """Levantada quando um login excedeu o número de tentativas falhas recentes."""
 
 
 def _hash_senha(senha: str) -> str:
     return hashlib.sha256(senha.encode("utf-8")).hexdigest()
-
-
-def email_e_corporativo(email: str) -> bool:
-    return bool(email) and email.strip().lower().endswith(f"@{DOMINIO_CORPORATIVO}")
 
 
 def _obter_aba_usuarios(sheets_url: str) -> gspread.Worksheet:
@@ -95,12 +82,15 @@ def _obter_aba_solicitacoes_acesso(sheets_url: str) -> gspread.Worksheet:
 
 
 def carregar_usuarios(sheets_url: str) -> dict:
-    """Retorna {email: {papel, nome}} dos usuários cadastrados (sem o Owner)."""
+    """Retorna {login: {senha_hash, papel, nome, totp_secret}} dos usuários cadastrados (sem o Owner)."""
     try:
         ws = _obter_aba_usuarios(sheets_url)
         linhas = ws.get_all_values()[1:]  # pula o cabeçalho
         return {
-            linha[0].strip().lower(): {"papel": linha[1], "nome": linha[2]}
+            linha[0]: {
+                "senha_hash": linha[1], "papel": linha[2], "nome": linha[3],
+                "totp_secret": linha[4] if len(linha) > 4 else "",
+            }
             for linha in linhas if linha and linha[0]
         }
     except Exception:
@@ -112,24 +102,37 @@ def salvar_usuarios(sheets_url: str, usuarios: dict) -> None:
     ws = _obter_aba_usuarios(sheets_url)
     ws.clear()
     linhas = [_HEADER_USUARIOS] + [
-        [email, dados["papel"], dados["nome"]]
-        for email, dados in usuarios.items()
+        [login, dados["senha_hash"], dados["papel"], dados["nome"], dados.get("totp_secret", "")]
+        for login, dados in usuarios.items()
     ]
     ws.update(linhas, value_input_option="RAW")
 
 
-def adicionar_usuario(sheets_url: str, email: str, papel: str, nome: str) -> None:
-    """Autoriza um e-mail @idg.org.br a entrar com o papel indicado — não tem
-    senha: a identidade em si é validada pelo Google no login."""
+def _adicionar_usuario_hash(sheets_url: str, login: str, senha_hash: str, papel: str, nome: str) -> None:
+    """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
+    (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
+    calculado no momento da solicitação; o Owner nunca vê a senha em texto).
+    Preserva o segredo de 2FA se o login já existia (ex: Owner reaprovando
+    depois de rejeitar por engano)."""
     usuarios = carregar_usuarios(sheets_url)
-    email = email.strip().lower()
-    usuarios[email] = {"papel": papel, "nome": nome.strip() or email}
+    login = login.strip()
+    totp_existente = usuarios.get(login, {}).get("totp_secret", "")
+    usuarios[login] = {
+        "senha_hash": senha_hash,
+        "papel": papel,
+        "nome": nome.strip() or login,
+        "totp_secret": totp_existente,
+    }
     salvar_usuarios(sheets_url, usuarios)
 
 
-def remover_usuario(sheets_url: str, email: str) -> None:
+def definir_totp_usuario(sheets_url: str, login: str, secret: str) -> None:
+    """Ativa (secret não-vazio) ou desativa (secret == '') o 2FA de um usuário cadastrado."""
     usuarios = carregar_usuarios(sheets_url)
-    usuarios.pop(email.strip().lower(), None)
+    login = login.strip()
+    if login not in usuarios:
+        return
+    usuarios[login]["totp_secret"] = secret
     salvar_usuarios(sheets_url, usuarios)
 
 
@@ -150,10 +153,20 @@ def verificar_totp(secret: str, codigo: str) -> bool:
         return False
 
 
+def adicionar_usuario(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> None:
+    _adicionar_usuario_hash(sheets_url, login, _hash_senha(senha), papel, nome)
+
+
+def remover_usuario(sheets_url: str, login: str) -> None:
+    usuarios = carregar_usuarios(sheets_url)
+    usuarios.pop(login.strip(), None)
+    salvar_usuarios(sheets_url, usuarios)
+
+
 # --------------------------------------------------------------------------- #
-# SOLICITAÇÕES DE ACESSO — depois de "Entrar com Google" confirmar a          #
-# identidade @idg.org.br, a pessoa só escolhe o papel desejado (sem senha,    #
-# sem login digitado — e-mail e nome vêm direto do token do Google).          #
+# SOLICITAÇÕES DE ACESSO — autocadastro na tela de login, aprovado pelo Owner. #
+# A senha é hasheada já na solicitação: o Owner aprova o cadastro sem nunca   #
+# ver a senha em texto puro. Também persistido na planilha (mesmo motivo).   #
 # --------------------------------------------------------------------------- #
 
 def carregar_solicitacoes_acesso(sheets_url: str) -> list[dict]:
@@ -161,8 +174,8 @@ def carregar_solicitacoes_acesso(sheets_url: str) -> list[dict]:
         ws = _obter_aba_solicitacoes_acesso(sheets_url)
         linhas = ws.get_all_values()[1:]
         return [
-            {"login": l[0], "papel": l[1], "nome": l[2],
-             "data_solicitacao": l[3] if len(l) > 3 else ""}
+            {"login": l[0], "senha_hash": l[1], "papel": l[2], "nome": l[3],
+             "data_solicitacao": l[4] if len(l) > 4 else ""}
             for l in linhas if l and l[0]
         ]
     except Exception:
@@ -173,37 +186,36 @@ def _salvar_solicitacoes_acesso(sheets_url: str, lista: list[dict]) -> None:
     ws = _obter_aba_solicitacoes_acesso(sheets_url)
     ws.clear()
     linhas = [_HEADER_SOLICITACOES_ACESSO] + [
-        [s["login"], s["papel"], s["nome"], s.get("data_solicitacao", "")]
+        [s["login"], s["senha_hash"], s["papel"], s["nome"], s.get("data_solicitacao", "")]
         for s in lista
     ]
     ws.update(linhas, value_input_option="RAW")
 
 
-def criar_solicitacao_acesso(sheets_url: str, email: str, papel: str, nome: str) -> str | None:
+def criar_solicitacao_acesso(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> str | None:
     """
-    Registra um pedido de acesso pendente pra um e-mail já verificado pelo
-    Google (chamador garante isso ANTES de chamar esta função). Retorna None
-    se deu certo, ou uma mensagem de erro se já estiver cadastrado/pendente.
+    Registra um pedido de acesso pendente. Retorna None se deu certo, ou uma
+    mensagem de erro se o login já estiver em uso (pelo Owner, por um usuário
+    já cadastrado, ou por outra solicitação ainda não avaliada).
     """
-    email = email.strip().lower()
-    if not email:
-        return "E-mail inválido."
-    if not email_e_corporativo(email):
-        return f"Acesso restrito a e-mails @{DOMINIO_CORPORATIVO}."
+    login = login.strip()
+    if not login or not senha:
+        return "Login e senha são obrigatórios."
     if papel not in PAPEIS_AUTOCADASTRO:
         return "Papel inválido para autocadastro."
 
     usuarios = carregar_usuarios(sheets_url)
     pendentes = carregar_solicitacoes_acesso(sheets_url)
-    if email in usuarios:
-        return "Este e-mail já está cadastrado."
-    if any(s["login"] == email for s in pendentes):
-        return "Já existe uma solicitação pendente para este e-mail."
+    if login in usuarios:
+        return "Este login já está cadastrado."
+    if any(s["login"] == login for s in pendentes):
+        return "Já existe uma solicitação pendente para este login."
 
     pendentes.append({
-        "login": email,
+        "login": login,
+        "senha_hash": _hash_senha(senha),
         "papel": papel,
-        "nome": nome.strip() or email,
+        "nome": nome.strip() or login,
         "data_solicitacao": datetime.now().isoformat(),
     })
     _salvar_solicitacoes_acesso(sheets_url, pendentes)
@@ -217,7 +229,10 @@ def aprovar_solicitacao_acesso(sheets_url: str, login: str) -> None:
     solicitacao = next((s for s in pendentes if s["login"] == login), None)
     if not solicitacao:
         return
-    adicionar_usuario(sheets_url, solicitacao["login"], solicitacao["papel"], solicitacao["nome"])
+    _adicionar_usuario_hash(
+        sheets_url, solicitacao["login"], solicitacao["senha_hash"],
+        solicitacao["papel"], solicitacao["nome"],
+    )
     _salvar_solicitacoes_acesso(sheets_url, [s for s in pendentes if s["login"] != login])
 
 
@@ -284,17 +299,16 @@ def _registrar_tentativa_falha(sheets_url: str, login: str) -> None:
     ws.append_row([login, datetime.now().isoformat()], value_input_option="RAW")
 
 
-def autenticar_owner(
+def autenticar(
     sheets_url: str, login: str, senha: str,
     owner_login: str, owner_senha: str, owner_totp_secret: str = "",
 ) -> dict | None:
     """
-    Login por senha é exclusivo do Owner agora — todo o resto da equipe entra
-    por "Entrar com Google" (ver `email_e_corporativo`/papel resolvido direto
-    na planilha por e-mail). Retorna {"papel", "nome", "login", "totp_secret"}
-    se a senha bateu, ou None se errou. Levanta LoginBloqueadoError se excedeu
-    as tentativas recentes. O retorno não confirma a sessão sozinho quando há
-    totp_secret — o chamador ainda precisa validar o código de 2FA antes.
+    Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (planilha).
+    Retorna {"papel", "nome", "login", "totp_secret"} se a senha bateu, ou None se
+    errou. Levanta LoginBloqueadoError se o login excedeu as tentativas recentes.
+    O retorno não confirma a sessão sozinho quando há totp_secret — o chamador
+    ainda precisa validar o código de 2FA antes de autenticar de fato.
     """
     login = login.strip()
 
@@ -313,11 +327,23 @@ def autenticar_owner(
     if owner_login and login == owner_login and senha == owner_senha:
         return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login, "totp_secret": owner_totp_secret}
 
-    if sheets_url:
-        try:
-            _registrar_tentativa_falha(sheets_url, login)
-        except Exception:
-            pass  # não deixa uma falha de escrita mascarar o "senha incorreta"
+    if not sheets_url:
+        return None
+
+    usuarios = carregar_usuarios(sheets_url)
+    registro = usuarios.get(login)
+    if registro and registro.get("senha_hash") == _hash_senha(senha):
+        return {
+            "papel": registro.get("papel", PAPEL_VIEWER),
+            "nome": registro.get("nome", login),
+            "login": login,
+            "totp_secret": registro.get("totp_secret", ""),
+        }
+
+    try:
+        _registrar_tentativa_falha(sheets_url, login)
+    except Exception:
+        pass  # não deixa uma falha de escrita mascarar o "senha incorreta"
 
     return None
 

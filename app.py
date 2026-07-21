@@ -928,11 +928,10 @@ if not st.session_state["autenticado"]:
     )
 
     _pendente_2fa = st.session_state.get("_2fa_pendente")
-    _google_logado = hasattr(st, "user") and getattr(st.user, "is_logged_in", False)
 
     if _pendente_2fa:
-        # Segunda etapa do login do Owner: a senha já bateu, falta confirmar
-        # o código do aplicativo autenticador.
+        # Segunda etapa: a senha já bateu, falta confirmar o código do
+        # aplicativo autenticador (Owner e Admins com 2FA ativado).
         _, col_form, _ = st.columns([1, 1.2, 1])
         with col_form:
             st.info(f"Olá, {_pendente_2fa['nome']}. Confirme o código do seu aplicativo autenticador.")
@@ -955,105 +954,74 @@ if not st.session_state["autenticado"]:
                 st.rerun()
         st.stop()
 
-    elif _google_logado:
-        # Já passou pelo Google — o login em si está garantido pelo Workspace.
-        # Só falta: (a) confirmar que é do domínio corporativo e (b) achar
-        # (ou pedir) o papel dessa pessoa na planilha.
-        _email_google = (st.user.get("email") or "").strip().lower()
-        _nome_google  = st.user.get("name") or _email_google
-        _email_ok     = st.user.get("email_verified", False) and dh.email_e_corporativo(_email_google)
+    _, col_form, _ = st.columns([1, 1.2, 1])
+    with col_form:
+        with st.form("form_login"):
+            login_input = st.text_input("Login", placeholder="seu login")
+            senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
 
-        _, col_form, _ = st.columns([1, 1.2, 1])
-        with col_form:
-            if not _email_ok:
-                st.error(
-                    f"Acesso restrito a e-mails **@{dh.DOMINIO_CORPORATIVO}**. "
-                    f"Você entrou como `{_email_google or 'desconhecido'}`."
+        if entrar:
+            resultado = None
+            bloqueado = False
+            try:
+                resultado = dh.autenticar(
+                    sheets_url_input, login_input, senha_input,
+                    _OWNER_LOGIN, _OWNER_SENHA, _OWNER_TOTP_SECRET,
                 )
-                if st.button("Sair e tentar com outra conta", use_container_width=True):
-                    st.logout()
-                st.stop()
+            except dh.LoginBloqueadoError as e:
+                bloqueado = True
+                st.error(str(e))
 
-            _usuarios = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
-            _registro = _usuarios.get(_email_google)
+            if resultado:
+                if resultado.get("totp_secret"):
+                    st.session_state["_2fa_pendente"] = resultado
+                    st.rerun()
+                else:
+                    st.session_state["autenticado"]   = True
+                    st.session_state["papel"]         = resultado["papel"]
+                    st.session_state["nome_usuario"]  = resultado["nome"]
+                    st.session_state["login_usuario"] = resultado["login"]
+                    st.session_state["intro_pendente"] = True
+                    st.rerun()
+            elif not bloqueado:
+                st.error("Login ou senha incorretos.")
 
-            if _registro:
-                st.session_state["autenticado"]    = True
-                st.session_state["papel"]          = _registro["papel"]
-                st.session_state["nome_usuario"]   = _registro.get("nome") or _nome_google
-                st.session_state["login_usuario"]  = _email_google
-                st.session_state["intro_pendente"] = True
-                st.rerun()
-            else:
-                st.success(f"Identidade confirmada: **{_nome_google}** ({_email_google})")
-                st.caption(
-                    "Sua conta ainda não tem papel liberado neste dashboard. "
-                    "Escolha o que você precisa — fica pendente até o Owner aprovar."
-                )
-                with st.form("form_solicitar_acesso_google"):
-                    sol_papel = st.selectbox(
-                        "Papel desejado",
-                        options=dh.PAPEIS_AUTOCADASTRO,
-                        format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
-                    )
-                    sol_enviar = st.form_submit_button("📨 Enviar solicitação", use_container_width=True)
-                if sol_enviar:
-                    if not sheets_url_input:
-                        st.error("Fonte de dados ainda não configurada — peça ao Owner pra configurar antes.")
-                    else:
-                        try:
-                            erro = dh.criar_solicitacao_acesso(sheets_url_input, _email_google, sol_papel, _nome_google)
-                        except Exception as e:
-                            erro = f"Não foi possível gravar na planilha. Detalhe técnico: `{e}`"
-                        if erro:
-                            st.error(erro)
-                        else:
-                            st.success("Solicitação enviada! Você poderá entrar assim que o Owner aprovar.")
-                if st.button("Sair"):
-                    st.logout()
-        st.stop()
-
-    else:
-        _, col_form, _ = st.columns([1, 1.2, 1])
-        with col_form:
-            st.button(
-                f"🔵 Entrar com Google (conta @{dh.DOMINIO_CORPORATIVO})",
-                use_container_width=True,
-                on_click=st.login,
+        with st.expander("Ainda não tem acesso? Solicitar cadastro"):
+            st.caption(
+                "Preencha os dados abaixo — sua solicitação fica pendente até o "
+                "Owner aprovar. Não é possível se autocadastrar como Admin."
             )
-            st.caption("Use sua conta Google corporativa — o acesso é liberado por e-mail, sem senha própria.")
+            with st.form("form_solicitar_acesso", clear_on_submit=True):
+                sol_nome  = st.text_input("Nome de exibição")
+                sol_login = st.text_input("Login desejado")
+                sol_senha = st.text_input("Senha desejada", type="password")
+                sol_senha2 = st.text_input("Confirme a senha", type="password")
+                sol_papel = st.selectbox(
+                    "Papel desejado",
+                    options=dh.PAPEIS_AUTOCADASTRO,
+                    format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
+                )
+                sol_enviar = st.form_submit_button("📨 Enviar solicitação", use_container_width=True)
 
-            with st.expander("Sou o Owner — entrar com login e senha"):
-                with st.form("form_login"):
-                    login_input = st.text_input("Login", placeholder="seu login")
-                    senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
-                    entrar = st.form_submit_button("Entrar", use_container_width=True)
-
-                if entrar:
-                    resultado = None
-                    bloqueado = False
+            if sol_enviar:
+                if not sol_nome.strip():
+                    st.error("Informe seu nome de exibição.")
+                elif sol_senha != sol_senha2:
+                    st.error("As senhas não coincidem.")
+                elif sol_login.strip() == _OWNER_LOGIN:
+                    st.error("Este login já é o do Owner.")
+                elif not sheets_url_input:
+                    st.error("Fonte de dados ainda não configurada — peça ao Owner pra configurar antes.")
+                else:
                     try:
-                        resultado = dh.autenticar_owner(
-                            sheets_url_input, login_input, senha_input,
-                            _OWNER_LOGIN, _OWNER_SENHA, _OWNER_TOTP_SECRET,
-                        )
-                    except dh.LoginBloqueadoError as e:
-                        bloqueado = True
-                        st.error(str(e))
-
-                    if resultado:
-                        if resultado.get("totp_secret"):
-                            st.session_state["_2fa_pendente"] = resultado
-                            st.rerun()
-                        else:
-                            st.session_state["autenticado"]   = True
-                            st.session_state["papel"]         = resultado["papel"]
-                            st.session_state["nome_usuario"]  = resultado["nome"]
-                            st.session_state["login_usuario"] = resultado["login"]
-                            st.session_state["intro_pendente"] = True
-                            st.rerun()
-                    elif not bloqueado:
-                        st.error("Login ou senha incorretos.")
+                        erro = dh.criar_solicitacao_acesso(sheets_url_input, sol_login, sol_senha, sol_papel, sol_nome)
+                    except Exception as e:
+                        erro = f"Não foi possível gravar na planilha. Detalhe técnico: `{e}`"
+                    if erro:
+                        st.error(erro)
+                    else:
+                        st.success("Solicitação enviada! Você poderá entrar assim que o Owner aprovar.")
 
     st.stop()
 
@@ -1155,10 +1123,7 @@ with st.sidebar:
             st.session_state["papel"]         = None
             st.session_state["nome_usuario"]  = None
             st.session_state["login_usuario"] = None
-            if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
-                st.logout()  # também limpa o cookie de identidade do Google
-            else:
-                st.rerun()
+            st.rerun()
 
     # ------------------------------------------------------------------ #
     # Alternador de tema — lembrado por pessoa (claro/escuro)              #
@@ -2797,46 +2762,80 @@ def _pagina_configuracoes():
             except Exception as e:
                 st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
-    # --- Autenticação de dois fatores (2FA) — só o Owner tem senha própria;   ---
-    # --- o resto da equipe entra com Google, que já cuida disso por conta.   ---
-    if _papel_usuario == dh.PAPEL_OWNER:
+    # --- Autenticação de dois fatores (2FA) — Owner e Admin, cada um pra si ---
+    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
         st.divider()
         secao_titulo("Autenticação de dois fatores (2FA)", icone="lock")
         st.caption(
             "Exige um código do seu app autenticador (Google Authenticator, Authy etc.) "
-            "além da senha do Owner, pra dificultar invasão mesmo se a senha vazar. "
-            "Admin/Viewer/Requisitante entram com Google — 2FA para essas contas é "
-            "gerenciado direto pelo Google Workspace da organização."
+            "além da senha, pra dificultar invasão mesmo se a senha vazar."
         )
-        if _OWNER_TOTP_SECRET:
-            st.success("✅ 2FA ativo pro Owner (segredo configurado nas Secrets).")
+
+        if _papel_usuario == dh.PAPEL_OWNER:
+            if _OWNER_TOTP_SECRET:
+                st.success("✅ 2FA ativo pro Owner (segredo configurado nas Secrets).")
+            else:
+                st.warning("2FA ainda não ativado pro Owner.")
+                if st.button("🔐 Gerar segredo de 2FA"):
+                    st.session_state["_novo_totp_owner"] = dh.gerar_segredo_totp()
+                _segredo_gerado = st.session_state.get("_novo_totp_owner")
+                if _segredo_gerado:
+                    _uri = dh.obter_totp_uri(_segredo_gerado, _OWNER_LOGIN or "owner")
+                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
+                    st.code(_segredo_gerado, language=None)
+                    st.info(
+                        "Nas Secrets do Streamlit Cloud, adicione:\n\n"
+                        f"`ADMIN_TOTP_SECRET = \"{_segredo_gerado}\"`\n\n"
+                        "e salve — o app reinicia sozinho e o 2FA passa a valer no próximo login."
+                    )
         else:
-            st.warning("2FA ainda não ativado pro Owner.")
-            if st.button("🔐 Gerar segredo de 2FA"):
-                st.session_state["_novo_totp_owner"] = dh.gerar_segredo_totp()
-            _segredo_gerado = st.session_state.get("_novo_totp_owner")
-            if _segredo_gerado:
-                _uri = dh.obter_totp_uri(_segredo_gerado, _OWNER_LOGIN or "owner")
-                st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
-                st.code(_segredo_gerado, language=None)
-                st.info(
-                    "Nas Secrets do Streamlit Cloud, adicione:\n\n"
-                    f"`ADMIN_TOTP_SECRET = \"{_segredo_gerado}\"`\n\n"
-                    "e salve — o app reinicia sozinho e o 2FA passa a valer no próximo login."
-                )
+            _usuarios_2fa = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
+            _meu_registro = _usuarios_2fa.get(st.session_state["login_usuario"], {})
+            _meu_totp = _meu_registro.get("totp_secret", "")
+
+            if _meu_totp:
+                st.success("✅ 2FA ativo na sua conta.")
+                with st.form("form_desativar_2fa"):
+                    codigo_desativar = st.text_input("Digite um código atual do app pra desativar", max_chars=6)
+                    desativar_2fa = st.form_submit_button("Desativar 2FA")
+                if desativar_2fa:
+                    if dh.verificar_totp(_meu_totp, codigo_desativar):
+                        dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], "")
+                        st.session_state["flash_ok"] = "2FA desativado."
+                        st.rerun()
+                    else:
+                        st.error("Código inválido.")
+            else:
+                st.warning("2FA ainda não ativado na sua conta.")
+                if st.button("🔐 Ativar 2FA"):
+                    st.session_state["_novo_totp_admin"] = dh.gerar_segredo_totp()
+                _segredo_admin = st.session_state.get("_novo_totp_admin")
+                if _segredo_admin:
+                    _uri = dh.obter_totp_uri(_segredo_admin, st.session_state["login_usuario"])
+                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
+                    st.code(_segredo_admin, language=None)
+                    with st.form("form_confirmar_2fa"):
+                        codigo_confirmar = st.text_input("Digite o código gerado pra confirmar", max_chars=6)
+                        confirmar_ativacao = st.form_submit_button("Confirmar e ativar")
+                    if confirmar_ativacao:
+                        if dh.verificar_totp(_segredo_admin, codigo_confirmar):
+                            dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], _segredo_admin)
+                            st.session_state.pop("_novo_totp_admin", None)
+                            st.session_state["flash_ok"] = "2FA ativado com sucesso."
+                            st.rerun()
+                        else:
+                            st.error("Código inválido — confira o horário do seu celular e tente de novo.")
 
     # --- Gerenciar Acessos — visível APENAS para o Owner ---
     if _papel_usuario == dh.PAPEL_OWNER:
         st.divider()
         secao_titulo("Gerenciar Acessos", icone="user")
-        st.caption(
-            f"Autorize e-mails @{dh.DOMINIO_CORPORATIVO} a entrar com Google — "
-            "não existe senha aqui, a pessoa só precisa estar logada na própria conta corporativa."
-        )
+        st.caption("Cadastre administradores, visualizadores e requisitantes.")
 
         with st.form("form_novo_usuario", clear_on_submit=True):
-            novo_login = st.text_input("E-mail corporativo", placeholder=f"nome@{dh.DOMINIO_CORPORATIVO}")
+            novo_login = st.text_input("Login do novo usuário")
             novo_nome  = st.text_input("Nome de exibição")
+            nova_senha = st.text_input("Senha", type="password")
             novo_papel = st.selectbox(
                 "Papel",
                 options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER, dh.PAPEL_REQUISITANTE],
@@ -2847,14 +2846,14 @@ def _pagina_configuracoes():
         if cadastrar:
             if not sheets_url_input:
                 st.error("Configure a fonte de dados (acima) antes de cadastrar usuários.")
-            elif not novo_login.strip():
-                st.error("Informe o e-mail corporativo.")
-            elif not dh.email_e_corporativo(novo_login):
-                st.error(f"O e-mail precisa terminar em @{dh.DOMINIO_CORPORATIVO}.")
+            elif not novo_login.strip() or not nova_senha:
+                st.error("Login e senha são obrigatórios.")
+            elif novo_login.strip() == _OWNER_LOGIN:
+                st.error("Este login já é o do Owner.")
             else:
                 try:
-                    dh.adicionar_usuario(sheets_url_input, novo_login, novo_papel, novo_nome)
-                    st.session_state["flash_ok"] = f"{novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
+                    dh.adicionar_usuario(sheets_url_input, novo_login, nova_senha, novo_papel, novo_nome)
+                    st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
                     st.rerun()
                 except Exception as e:
                     st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
