@@ -21,16 +21,20 @@ import streamlit as st
 
 
 # --------------------------------------------------------------------------- #
-# GESTÃO DE ACESSOS — Owner / Admin / Viewer                                   #
-# O Owner vem das Secrets do Streamlit (login fixo, não editável pela UI).    #
-# Admins, Viewers e Requisitantes são cadastrados pelo Owner (ou por          #
-# autocadastro aprovado) e persistidos na PRÓPRIA PLANILHA — nunca em disco.  #
+# GESTÃO DE ACESSOS — Owner / Admin / Viewer / Requisitante                    #
+# O Owner é a única conta com senha própria (vem das Secrets do Streamlit,    #
+# login fixo, não editável pela UI) — mantém 2FA opcional como reforço.      #
+# Todo o resto da equipe entra por "Entrar com Google", restrito ao domínio  #
+# corporativo (@idg.org.br): a autenticação em si é inteiramente do Google,  #
+# nós só guardamos qual PAPEL cada e-mail já aprovado tem. Sem senha própria #
+# pra essas contas — nada pra vazar, adivinhar ou reutilizar nesse ponto.    #
+# Cadastros e solicitações persistem na PRÓPRIA PLANILHA — nunca em disco.   #
 # O disco local do Streamlit Community Cloud é efêmero: qualquer redeploy,    #
 # reinício por inatividade ou alteração de Secrets recria o container do     #
 # zero e apaga tudo que não estiver versionado no Git ou salvo na planilha.  #
 # Um arquivo local (.dashboard_usuarios.json) já causou perda de cadastros    #
-# dessa forma — por isso a fonte de verdade agora é a planilha, do mesmo     #
-# jeito que já era feito com Aprovações.                                     #
+# dessa forma — por isso a fonte de verdade é a planilha, do mesmo jeito     #
+# que já era feito com Aprovações.                                           #
 # --------------------------------------------------------------------------- #
 
 PAPEL_OWNER        = "owner"
@@ -38,23 +42,32 @@ PAPEL_ADMIN        = "admin"
 PAPEL_VIEWER       = "viewer"
 PAPEL_REQUISITANTE = "requisitante"
 
+# Domínio corporativo do Google Workspace — só e-mails desse domínio, com
+# email_verified=True no token do Google, podem virar sessão autenticada.
+DOMINIO_CORPORATIVO = "idg.org.br"
+
 _ABA_USUARIOS   = "_Usuarios"
-_HEADER_USUARIOS = ["login", "senha_hash", "papel", "nome", "totp_secret"]
+_HEADER_USUARIOS = ["login", "papel", "nome"]  # "login" == e-mail @idg.org.br verificado pelo Google
 
 _ABA_SOLICITACOES_ACESSO   = "_SolicitacoesAcesso"
-_HEADER_SOLICITACOES_ACESSO = ["login", "senha_hash", "papel", "nome", "data_solicitacao"]
+_HEADER_SOLICITACOES_ACESSO = ["login", "papel", "nome", "data_solicitacao"]
 
-# Papéis que uma pessoa pode pedir por autocadastro — Admin fica de fora de
-# propósito; só o Owner promove alguém a Admin, manualmente, depois.
+# Papéis que uma pessoa pode pedir por autocadastro (depois de já ter provado
+# a identidade @idg.org.br via Google) — Admin fica de fora de propósito; só
+# o Owner promove alguém a Admin, manualmente, depois.
 PAPEIS_AUTOCADASTRO = [PAPEL_VIEWER, PAPEL_REQUISITANTE]
 
 
 class LoginBloqueadoError(Exception):
-    """Levantada quando um login excedeu o número de tentativas falhas recentes."""
+    """Levantada quando o login do Owner excedeu o número de tentativas falhas recentes."""
 
 
 def _hash_senha(senha: str) -> str:
     return hashlib.sha256(senha.encode("utf-8")).hexdigest()
+
+
+def email_e_corporativo(email: str) -> bool:
+    return bool(email) and email.strip().lower().endswith(f"@{DOMINIO_CORPORATIVO}")
 
 
 def _obter_aba_usuarios(sheets_url: str) -> gspread.Worksheet:
@@ -82,15 +95,12 @@ def _obter_aba_solicitacoes_acesso(sheets_url: str) -> gspread.Worksheet:
 
 
 def carregar_usuarios(sheets_url: str) -> dict:
-    """Retorna {login: {senha_hash, papel, nome, totp_secret}} dos usuários cadastrados (sem o Owner)."""
+    """Retorna {email: {papel, nome}} dos usuários cadastrados (sem o Owner)."""
     try:
         ws = _obter_aba_usuarios(sheets_url)
         linhas = ws.get_all_values()[1:]  # pula o cabeçalho
         return {
-            linha[0]: {
-                "senha_hash": linha[1], "papel": linha[2], "nome": linha[3],
-                "totp_secret": linha[4] if len(linha) > 4 else "",
-            }
+            linha[0].strip().lower(): {"papel": linha[1], "nome": linha[2]}
             for linha in linhas if linha and linha[0]
         }
     except Exception:
@@ -102,37 +112,24 @@ def salvar_usuarios(sheets_url: str, usuarios: dict) -> None:
     ws = _obter_aba_usuarios(sheets_url)
     ws.clear()
     linhas = [_HEADER_USUARIOS] + [
-        [login, dados["senha_hash"], dados["papel"], dados["nome"], dados.get("totp_secret", "")]
-        for login, dados in usuarios.items()
+        [email, dados["papel"], dados["nome"]]
+        for email, dados in usuarios.items()
     ]
     ws.update(linhas, value_input_option="RAW")
 
 
-def _adicionar_usuario_hash(sheets_url: str, login: str, senha_hash: str, papel: str, nome: str) -> None:
-    """Grava o usuário já com o hash pronto — usado tanto pelo cadastro direto
-    (Owner) quanto pela aprovação de uma solicitação de acesso (o hash é
-    calculado no momento da solicitação; o Owner nunca vê a senha em texto).
-    Preserva o segredo de 2FA se o login já existia (ex: Owner reaprovando
-    depois de rejeitar por engano)."""
+def adicionar_usuario(sheets_url: str, email: str, papel: str, nome: str) -> None:
+    """Autoriza um e-mail @idg.org.br a entrar com o papel indicado — não tem
+    senha: a identidade em si é validada pelo Google no login."""
     usuarios = carregar_usuarios(sheets_url)
-    login = login.strip()
-    totp_existente = usuarios.get(login, {}).get("totp_secret", "")
-    usuarios[login] = {
-        "senha_hash": senha_hash,
-        "papel": papel,
-        "nome": nome.strip() or login,
-        "totp_secret": totp_existente,
-    }
+    email = email.strip().lower()
+    usuarios[email] = {"papel": papel, "nome": nome.strip() or email}
     salvar_usuarios(sheets_url, usuarios)
 
 
-def definir_totp_usuario(sheets_url: str, login: str, secret: str) -> None:
-    """Ativa (secret não-vazio) ou desativa (secret == '') o 2FA de um usuário cadastrado."""
+def remover_usuario(sheets_url: str, email: str) -> None:
     usuarios = carregar_usuarios(sheets_url)
-    login = login.strip()
-    if login not in usuarios:
-        return
-    usuarios[login]["totp_secret"] = secret
+    usuarios.pop(email.strip().lower(), None)
     salvar_usuarios(sheets_url, usuarios)
 
 
@@ -153,20 +150,10 @@ def verificar_totp(secret: str, codigo: str) -> bool:
         return False
 
 
-def adicionar_usuario(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> None:
-    _adicionar_usuario_hash(sheets_url, login, _hash_senha(senha), papel, nome)
-
-
-def remover_usuario(sheets_url: str, login: str) -> None:
-    usuarios = carregar_usuarios(sheets_url)
-    usuarios.pop(login.strip(), None)
-    salvar_usuarios(sheets_url, usuarios)
-
-
 # --------------------------------------------------------------------------- #
-# SOLICITAÇÕES DE ACESSO — autocadastro na tela de login, aprovado pelo Owner. #
-# A senha é hasheada já na solicitação: o Owner aprova o cadastro sem nunca   #
-# ver a senha em texto puro. Também persistido na planilha (mesmo motivo).   #
+# SOLICITAÇÕES DE ACESSO — depois de "Entrar com Google" confirmar a          #
+# identidade @idg.org.br, a pessoa só escolhe o papel desejado (sem senha,    #
+# sem login digitado — e-mail e nome vêm direto do token do Google).          #
 # --------------------------------------------------------------------------- #
 
 def carregar_solicitacoes_acesso(sheets_url: str) -> list[dict]:
@@ -174,8 +161,8 @@ def carregar_solicitacoes_acesso(sheets_url: str) -> list[dict]:
         ws = _obter_aba_solicitacoes_acesso(sheets_url)
         linhas = ws.get_all_values()[1:]
         return [
-            {"login": l[0], "senha_hash": l[1], "papel": l[2], "nome": l[3],
-             "data_solicitacao": l[4] if len(l) > 4 else ""}
+            {"login": l[0], "papel": l[1], "nome": l[2],
+             "data_solicitacao": l[3] if len(l) > 3 else ""}
             for l in linhas if l and l[0]
         ]
     except Exception:
@@ -186,36 +173,37 @@ def _salvar_solicitacoes_acesso(sheets_url: str, lista: list[dict]) -> None:
     ws = _obter_aba_solicitacoes_acesso(sheets_url)
     ws.clear()
     linhas = [_HEADER_SOLICITACOES_ACESSO] + [
-        [s["login"], s["senha_hash"], s["papel"], s["nome"], s.get("data_solicitacao", "")]
+        [s["login"], s["papel"], s["nome"], s.get("data_solicitacao", "")]
         for s in lista
     ]
     ws.update(linhas, value_input_option="RAW")
 
 
-def criar_solicitacao_acesso(sheets_url: str, login: str, senha: str, papel: str, nome: str) -> str | None:
+def criar_solicitacao_acesso(sheets_url: str, email: str, papel: str, nome: str) -> str | None:
     """
-    Registra um pedido de acesso pendente. Retorna None se deu certo, ou uma
-    mensagem de erro se o login já estiver em uso (pelo Owner, por um usuário
-    já cadastrado, ou por outra solicitação ainda não avaliada).
+    Registra um pedido de acesso pendente pra um e-mail já verificado pelo
+    Google (chamador garante isso ANTES de chamar esta função). Retorna None
+    se deu certo, ou uma mensagem de erro se já estiver cadastrado/pendente.
     """
-    login = login.strip()
-    if not login or not senha:
-        return "Login e senha são obrigatórios."
+    email = email.strip().lower()
+    if not email:
+        return "E-mail inválido."
+    if not email_e_corporativo(email):
+        return f"Acesso restrito a e-mails @{DOMINIO_CORPORATIVO}."
     if papel not in PAPEIS_AUTOCADASTRO:
         return "Papel inválido para autocadastro."
 
     usuarios = carregar_usuarios(sheets_url)
     pendentes = carregar_solicitacoes_acesso(sheets_url)
-    if login in usuarios:
-        return "Este login já está cadastrado."
-    if any(s["login"] == login for s in pendentes):
-        return "Já existe uma solicitação pendente para este login."
+    if email in usuarios:
+        return "Este e-mail já está cadastrado."
+    if any(s["login"] == email for s in pendentes):
+        return "Já existe uma solicitação pendente para este e-mail."
 
     pendentes.append({
-        "login": login,
-        "senha_hash": _hash_senha(senha),
+        "login": email,
         "papel": papel,
-        "nome": nome.strip() or login,
+        "nome": nome.strip() or email,
         "data_solicitacao": datetime.now().isoformat(),
     })
     _salvar_solicitacoes_acesso(sheets_url, pendentes)
@@ -229,10 +217,7 @@ def aprovar_solicitacao_acesso(sheets_url: str, login: str) -> None:
     solicitacao = next((s for s in pendentes if s["login"] == login), None)
     if not solicitacao:
         return
-    _adicionar_usuario_hash(
-        sheets_url, solicitacao["login"], solicitacao["senha_hash"],
-        solicitacao["papel"], solicitacao["nome"],
-    )
+    adicionar_usuario(sheets_url, solicitacao["login"], solicitacao["papel"], solicitacao["nome"])
     _salvar_solicitacoes_acesso(sheets_url, [s for s in pendentes if s["login"] != login])
 
 
@@ -299,16 +284,17 @@ def _registrar_tentativa_falha(sheets_url: str, login: str) -> None:
     ws.append_row([login, datetime.now().isoformat()], value_input_option="RAW")
 
 
-def autenticar(
+def autenticar_owner(
     sheets_url: str, login: str, senha: str,
     owner_login: str, owner_senha: str, owner_totp_secret: str = "",
 ) -> dict | None:
     """
-    Verifica credenciais contra o Owner (Secrets) e os usuários cadastrados (planilha).
-    Retorna {"papel", "nome", "login", "totp_secret"} se a senha bateu, ou None se
-    errou. Levanta LoginBloqueadoError se o login excedeu as tentativas recentes.
-    O retorno não confirma a sessão sozinho quando há totp_secret — o chamador
-    ainda precisa validar o código de 2FA antes de autenticar de fato.
+    Login por senha é exclusivo do Owner agora — todo o resto da equipe entra
+    por "Entrar com Google" (ver `email_e_corporativo`/papel resolvido direto
+    na planilha por e-mail). Retorna {"papel", "nome", "login", "totp_secret"}
+    se a senha bateu, ou None se errou. Levanta LoginBloqueadoError se excedeu
+    as tentativas recentes. O retorno não confirma a sessão sozinho quando há
+    totp_secret — o chamador ainda precisa validar o código de 2FA antes.
     """
     login = login.strip()
 
@@ -327,23 +313,11 @@ def autenticar(
     if owner_login and login == owner_login and senha == owner_senha:
         return {"papel": PAPEL_OWNER, "nome": "Owner", "login": login, "totp_secret": owner_totp_secret}
 
-    if not sheets_url:
-        return None
-
-    usuarios = carregar_usuarios(sheets_url)
-    registro = usuarios.get(login)
-    if registro and registro.get("senha_hash") == _hash_senha(senha):
-        return {
-            "papel": registro.get("papel", PAPEL_VIEWER),
-            "nome": registro.get("nome", login),
-            "login": login,
-            "totp_secret": registro.get("totp_secret", ""),
-        }
-
-    try:
-        _registrar_tentativa_falha(sheets_url, login)
-    except Exception:
-        pass  # não deixa uma falha de escrita mascarar o "senha incorreta"
+    if sheets_url:
+        try:
+            _registrar_tentativa_falha(sheets_url, login)
+        except Exception:
+            pass  # não deixa uma falha de escrita mascarar o "senha incorreta"
 
     return None
 
@@ -1089,6 +1063,169 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
 
     _renumerar_descritivos(ws, grupo_idx)
     return avisos
+
+
+# --------------------------------------------------------------------------- #
+# CONFIGURAÇÕES DE NEGÓCIO — parâmetros ajustáveis pelo Owner na tela de       #
+# Configurações, persistidos na PLANILHA (não em disco — mesmo motivo de      #
+# sempre: o disco do Streamlit Cloud é efêmero e já causou perda de dado).    #
+# --------------------------------------------------------------------------- #
+
+_ABA_CONFIG    = "_Config"
+_HEADER_CONFIG = ["chave", "valor"]
+
+CONFIG_DIAS_ALERTA_PARCELA = "dias_alerta_parcela_atrasada"
+_CONFIG_PADRAO = {
+    CONFIG_DIAS_ALERTA_PARCELA: "40",
+}
+
+
+def _obter_aba_config(sheets_url: str) -> gspread.Worksheet:
+    planilha = _abrir_planilha(sheets_url)
+    try:
+        return planilha.worksheet(_ABA_CONFIG)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = planilha.add_worksheet(title=_ABA_CONFIG, rows=20, cols=len(_HEADER_CONFIG))
+        ws.append_row(_HEADER_CONFIG, value_input_option="RAW")
+        return ws
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_config(sheets_url: str) -> dict:
+    """Config de negócio ajustável (ex: dias de alerta de parcela atrasada).
+    Sempre retorna os padrões preenchidos, mesmo se a aba ainda não existir
+    ou a leitura falhar — nunca derruba o dashboard por causa de um parâmetro."""
+    config = dict(_CONFIG_PADRAO)
+    try:
+        ws = _obter_aba_config(sheets_url)
+        linhas = ws.get_all_values()[1:]
+        for l in linhas:
+            if l and l[0]:
+                config[l[0].strip()] = l[1].strip() if len(l) > 1 else ""
+    except Exception:
+        pass
+    return config
+
+
+def salvar_config_valor(sheets_url: str, chave: str, valor: str) -> None:
+    ws = _obter_aba_config(sheets_url)
+    linhas = ws.get_all_values()
+    idx_existente = next((i for i, l in enumerate(linhas[1:], start=1) if l and l[0].strip() == chave), None)
+    if idx_existente is not None:
+        ws.update_cell(idx_existente + 1, 2, valor)
+    else:
+        ws.append_row([chave, valor], value_input_option="RAW")
+
+
+# --------------------------------------------------------------------------- #
+# AUTO-BAIXA DE PARCELAS — "Data Pgto" só é preenchida quando a NF já foi     #
+# atendida e representa a DATA-LIMITE em que o pagamento sai: ao chegar nela, #
+# o pagamento já é certo. Assim, qualquer parcela cuja Data Pgto já tenha     #
+# passado (e que ainda não esteja como "Pago") é marcada automaticamente.    #
+#                                                                              #
+# Não existe processo em segundo plano — isso roda quando alguém abre o      #
+# dashboard (com cache de 1h pra não pesar a cada clique). Na prática, a     #
+# baixa acontece na PRÓXIMA VEZ que alguém abrir o dashboard após a data,    #
+# não no instante exato em que ela chega.                                    #
+# --------------------------------------------------------------------------- #
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def marcar_parcelas_vencidas_como_pagas(sheets_url: str, nome_aba: str) -> int:
+    """Varre todas as parcelas da planilha e marca como 'Pago' as que já
+    passaram da Data Pgto e ainda não estavam com esse status. Retorna
+    quantas parcelas foram atualizadas (0 se nenhuma, ou se algo falhar)."""
+    try:
+        ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    except Exception:
+        return 0
+
+    col_tipo   = mapa_col.get("tipo")
+    col_status = mapa_col.get("status")
+    col_data   = mapa_col.get("data_pgto")
+    if col_tipo is None or col_status is None or col_data is None:
+        return 0
+
+    hoje = date.today()
+    celulas = []
+    for r in range(header_row + 1, len(valores)):
+        linha = valores[r]
+        if col_tipo >= len(linha) or str(linha[col_tipo]).strip().title() != "Pagamento":
+            continue
+        status_atual = linha[col_status].strip() if col_status < len(linha) else ""
+        if status_atual in STATUS_GRUPOS["concluido"]:
+            continue
+        data_bruta = linha[col_data] if col_data < len(linha) else ""
+        if not data_bruta:
+            continue
+        data_pgto = pd.to_datetime(data_bruta, dayfirst=True, errors="coerce")
+        if pd.isna(data_pgto):
+            continue
+        if data_pgto.date() <= hoje:
+            celulas.append(gspread.Cell(r + 1, col_status + 1, "Pago"))
+
+    if celulas:
+        try:
+            ws.update_cells(celulas, value_input_option="USER_ENTERED")
+        except Exception:
+            return 0
+    return len(celulas)
+
+
+# --------------------------------------------------------------------------- #
+# ALERTA DE PARCELA POSSIVELMENTE ATRASADA — heurística de acompanhamento:    #
+# se uma parcela foi paga e, X dias corridos depois, a parcela SEGUINTE do    #
+# mesmo pedido ainda não tem Doc. Fiscal preenchido (ou seja, a NF dela nunca #
+# foi emitida), é sinal de que o fluxo pode ter travado — vale checar.       #
+# Puramente informativo: não altera nada na planilha.                        #
+# --------------------------------------------------------------------------- #
+
+def _campo_vazio(valor) -> bool:
+    if valor is None:
+        return True
+    try:
+        if pd.isna(valor):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(valor).strip().lower() in ("", "nan", "none", "—", "-")
+
+
+def detectar_parcelas_atrasadas(df: pd.DataFrame, dias_limite: int) -> list[dict]:
+    """
+    Para cada pedido (Compra + parcelas na ordem da planilha), verifica pares
+    de parcelas consecutivas: se a parcela N está Paga há `dias_limite` dias
+    ou mais e a parcela N+1 não tem Doc. Fiscal preenchido, retorna um alerta.
+    """
+    hoje = date.today()
+    alertas: list[dict] = []
+    for compra, pagamentos in agrupar_hierarquia(df):
+        if pagamentos is None or pagamentos.empty:
+            continue
+        registros = pagamentos.to_dict("records")
+        for i in range(len(registros) - 1):
+            atual = registros[i]
+            proxima = registros[i + 1]
+            if str(atual.get("status", "")).strip() not in STATUS_GRUPOS["concluido"]:
+                continue
+            data_pgto = atual.get("data_pgto")
+            if pd.isna(data_pgto):
+                continue
+            dias_desde_pagamento = (hoje - data_pgto.date()).days
+            if dias_desde_pagamento < dias_limite:
+                continue
+            if not _campo_vazio(proxima.get("doc_fiscal")):
+                continue
+            alertas.append({
+                "fornecedor":            compra.get("fornecedor", ""),
+                "descritivo_pedido":     compra.get("descritivo", ""),
+                "descritivo_parcela":    atual.get("descritivo", ""),
+                "descritivo_proxima":    proxima.get("descritivo", ""),
+                "data_pgto_anterior":    data_pgto,
+                "dias_desde_pagamento":  dias_desde_pagamento,
+                "valor_proxima":         proxima.get("valor", 0.0),
+            })
+    alertas.sort(key=lambda a: a["dias_desde_pagamento"], reverse=True)
+    return alertas
 
 
 # --------------------------------------------------------------------------- #

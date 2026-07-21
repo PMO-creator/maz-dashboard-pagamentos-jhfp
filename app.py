@@ -928,10 +928,11 @@ if not st.session_state["autenticado"]:
     )
 
     _pendente_2fa = st.session_state.get("_2fa_pendente")
+    _google_logado = hasattr(st, "user") and getattr(st.user, "is_logged_in", False)
 
     if _pendente_2fa:
-        # Segunda etapa: a senha já bateu, falta confirmar o código do
-        # aplicativo autenticador (Owner e Admins com 2FA ativado).
+        # Segunda etapa do login do Owner: a senha já bateu, falta confirmar
+        # o código do aplicativo autenticador.
         _, col_form, _ = st.columns([1, 1.2, 1])
         with col_form:
             st.info(f"Olá, {_pendente_2fa['nome']}. Confirme o código do seu aplicativo autenticador.")
@@ -954,74 +955,105 @@ if not st.session_state["autenticado"]:
                 st.rerun()
         st.stop()
 
-    _, col_form, _ = st.columns([1, 1.2, 1])
-    with col_form:
-        with st.form("form_login"):
-            login_input = st.text_input("Login", placeholder="seu login")
-            senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
-            entrar = st.form_submit_button("Entrar", use_container_width=True)
+    elif _google_logado:
+        # Já passou pelo Google — o login em si está garantido pelo Workspace.
+        # Só falta: (a) confirmar que é do domínio corporativo e (b) achar
+        # (ou pedir) o papel dessa pessoa na planilha.
+        _email_google = (st.user.get("email") or "").strip().lower()
+        _nome_google  = st.user.get("name") or _email_google
+        _email_ok     = st.user.get("email_verified", False) and dh.email_e_corporativo(_email_google)
 
-        if entrar:
-            resultado = None
-            bloqueado = False
-            try:
-                resultado = dh.autenticar(
-                    sheets_url_input, login_input, senha_input,
-                    _OWNER_LOGIN, _OWNER_SENHA, _OWNER_TOTP_SECRET,
+        _, col_form, _ = st.columns([1, 1.2, 1])
+        with col_form:
+            if not _email_ok:
+                st.error(
+                    f"Acesso restrito a e-mails **@{dh.DOMINIO_CORPORATIVO}**. "
+                    f"Você entrou como `{_email_google or 'desconhecido'}`."
                 )
-            except dh.LoginBloqueadoError as e:
-                bloqueado = True
-                st.error(str(e))
+                if st.button("Sair e tentar com outra conta", use_container_width=True):
+                    st.logout()
+                st.stop()
 
-            if resultado:
-                if resultado.get("totp_secret"):
-                    st.session_state["_2fa_pendente"] = resultado
-                    st.rerun()
-                else:
-                    st.session_state["autenticado"]   = True
-                    st.session_state["papel"]         = resultado["papel"]
-                    st.session_state["nome_usuario"]  = resultado["nome"]
-                    st.session_state["login_usuario"] = resultado["login"]
-                    st.session_state["intro_pendente"] = True
-                    st.rerun()
-            elif not bloqueado:
-                st.error("Login ou senha incorretos.")
+            _usuarios = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
+            _registro = _usuarios.get(_email_google)
 
-        with st.expander("Ainda não tem acesso? Solicitar cadastro"):
-            st.caption(
-                "Preencha os dados abaixo — sua solicitação fica pendente até o "
-                "Owner aprovar. Não é possível se autocadastrar como Admin."
-            )
-            with st.form("form_solicitar_acesso", clear_on_submit=True):
-                sol_nome  = st.text_input("Nome de exibição")
-                sol_login = st.text_input("Login desejado")
-                sol_senha = st.text_input("Senha desejada", type="password")
-                sol_senha2 = st.text_input("Confirme a senha", type="password")
-                sol_papel = st.selectbox(
-                    "Papel desejado",
-                    options=dh.PAPEIS_AUTOCADASTRO,
-                    format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
+            if _registro:
+                st.session_state["autenticado"]    = True
+                st.session_state["papel"]          = _registro["papel"]
+                st.session_state["nome_usuario"]   = _registro.get("nome") or _nome_google
+                st.session_state["login_usuario"]  = _email_google
+                st.session_state["intro_pendente"] = True
+                st.rerun()
+            else:
+                st.success(f"Identidade confirmada: **{_nome_google}** ({_email_google})")
+                st.caption(
+                    "Sua conta ainda não tem papel liberado neste dashboard. "
+                    "Escolha o que você precisa — fica pendente até o Owner aprovar."
                 )
-                sol_enviar = st.form_submit_button("📨 Enviar solicitação", use_container_width=True)
-
-            if sol_enviar:
-                if not sol_nome.strip():
-                    st.error("Informe seu nome de exibição.")
-                elif sol_senha != sol_senha2:
-                    st.error("As senhas não coincidem.")
-                elif sol_login.strip() == _OWNER_LOGIN:
-                    st.error("Este login já é o do Owner.")
-                elif not sheets_url_input:
-                    st.error("Fonte de dados ainda não configurada — peça ao Owner pra configurar antes.")
-                else:
-                    try:
-                        erro = dh.criar_solicitacao_acesso(sheets_url_input, sol_login, sol_senha, sol_papel, sol_nome)
-                    except Exception as e:
-                        erro = f"Não foi possível gravar na planilha. Detalhe técnico: `{e}`"
-                    if erro:
-                        st.error(erro)
+                with st.form("form_solicitar_acesso_google"):
+                    sol_papel = st.selectbox(
+                        "Papel desejado",
+                        options=dh.PAPEIS_AUTOCADASTRO,
+                        format_func=lambda p: _PAPEL_DESCRICAO.get(p, p),
+                    )
+                    sol_enviar = st.form_submit_button("📨 Enviar solicitação", use_container_width=True)
+                if sol_enviar:
+                    if not sheets_url_input:
+                        st.error("Fonte de dados ainda não configurada — peça ao Owner pra configurar antes.")
                     else:
-                        st.success("Solicitação enviada! Você poderá entrar assim que o Owner aprovar.")
+                        try:
+                            erro = dh.criar_solicitacao_acesso(sheets_url_input, _email_google, sol_papel, _nome_google)
+                        except Exception as e:
+                            erro = f"Não foi possível gravar na planilha. Detalhe técnico: `{e}`"
+                        if erro:
+                            st.error(erro)
+                        else:
+                            st.success("Solicitação enviada! Você poderá entrar assim que o Owner aprovar.")
+                if st.button("Sair"):
+                    st.logout()
+        st.stop()
+
+    else:
+        _, col_form, _ = st.columns([1, 1.2, 1])
+        with col_form:
+            st.button(
+                f"🔵 Entrar com Google (conta @{dh.DOMINIO_CORPORATIVO})",
+                use_container_width=True,
+                on_click=st.login,
+            )
+            st.caption("Use sua conta Google corporativa — o acesso é liberado por e-mail, sem senha própria.")
+
+            with st.expander("Sou o Owner — entrar com login e senha"):
+                with st.form("form_login"):
+                    login_input = st.text_input("Login", placeholder="seu login")
+                    senha_input = st.text_input("Senha", type="password", placeholder="••••••••")
+                    entrar = st.form_submit_button("Entrar", use_container_width=True)
+
+                if entrar:
+                    resultado = None
+                    bloqueado = False
+                    try:
+                        resultado = dh.autenticar_owner(
+                            sheets_url_input, login_input, senha_input,
+                            _OWNER_LOGIN, _OWNER_SENHA, _OWNER_TOTP_SECRET,
+                        )
+                    except dh.LoginBloqueadoError as e:
+                        bloqueado = True
+                        st.error(str(e))
+
+                    if resultado:
+                        if resultado.get("totp_secret"):
+                            st.session_state["_2fa_pendente"] = resultado
+                            st.rerun()
+                        else:
+                            st.session_state["autenticado"]   = True
+                            st.session_state["papel"]         = resultado["papel"]
+                            st.session_state["nome_usuario"]  = resultado["nome"]
+                            st.session_state["login_usuario"] = resultado["login"]
+                            st.session_state["intro_pendente"] = True
+                            st.rerun()
+                    elif not bloqueado:
+                        st.error("Login ou senha incorretos.")
 
     st.stop()
 
@@ -1123,7 +1155,10 @@ with st.sidebar:
             st.session_state["papel"]         = None
             st.session_state["nome_usuario"]  = None
             st.session_state["login_usuario"] = None
-            st.rerun()
+            if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+                st.logout()  # também limpa o cookie de identidade do Google
+            else:
+                st.rerun()
 
     # ------------------------------------------------------------------ #
     # Alternador de tema — lembrado por pessoa (claro/escuro)              #
@@ -1180,6 +1215,20 @@ elif sheets_url_input:
         st.stop()
 
     try:
+        # Auto-baixa de parcelas: "Data Pgto" é a data-limite em que o
+        # pagamento sai (só é preenchida quando a NF já foi atendida), então
+        # ao chegar nela o pagamento já é certo — marca como "Pago" sozinho.
+        # Cacheado por 1h (dh.marcar_parcelas_vencidas_como_pagas) pra não
+        # escrever na planilha a cada clique; se marcou algo agora, força a
+        # releitura pra já refletir na mesma tela em vez de esperar 5 min.
+        if sheets_url_input and "gcp_service_account" in st.secrets:
+            try:
+                _n_baixadas = dh.marcar_parcelas_vencidas_como_pagas(sheets_url_input, nome_aba_input)
+                if _n_baixadas:
+                    dh.carregar_do_sheets.clear()
+            except Exception:
+                pass
+
         df = dh.carregar_do_sheets(url_csv)
         fonte_dados = "🔄 Google Sheets · atualiza automaticamente a cada 5 min"
         # Verifica mudanças a cada 1h e registra no log (operação silenciosa)
@@ -1216,31 +1265,44 @@ if df is None or df.empty:
 df_compras, df_pag = dh.separar_por_tipo(df)
 kpis = dh.calcular_kpis(df)
 
+# Alerta de possível atraso: parcela paga há X dias sem que a próxima tenha
+# Doc. Fiscal preenchido (indício de NF nunca emitida). X é configurável em
+# Configurações (padrão 40 dias) — puramente informativo, não altera a planilha.
+_config_negocio = dh.carregar_config(sheets_url_input)
+try:
+    _dias_alerta_parcela = int(_config_negocio.get(dh.CONFIG_DIAS_ALERTA_PARCELA, 40))
+except (TypeError, ValueError):
+    _dias_alerta_parcela = 40
+parcelas_atrasadas = dh.detectar_parcelas_atrasadas(df, _dias_alerta_parcela)
+
 def _render_topo_contexto():
     """Fonte de dados, alerta de prazos e aviso de mapeamento — no topo de toda página."""
     # Indicador discreto de fonte e última atualização
     st.caption(fonte_dados)
 
-    # Alerta automático de prazos (vencidos / vencendo em 30 dias)
-    if "prazo_status" in df_compras.columns:
-        _n_vencidos = int((df_compras["prazo_status"] == dh.PRAZO_VENCIDO).sum())
-        _n_urgentes = int((df_compras["prazo_status"] == dh.PRAZO_URGENTE).sum())
-        if _n_vencidos or _n_urgentes:
-            _partes = []
-            if _n_vencidos:
-                _partes.append(f"🚨 <strong>{_n_vencidos}</strong> contrato{'s' if _n_vencidos != 1 else ''} vencido{'s' if _n_vencidos != 1 else ''}")
-            if _n_urgentes:
-                _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
-            st.markdown(
-                f"""
-                <div style="background:{C['urucum']}0F;border:1px solid {C['urucum']}55;border-radius:6px;
-                            padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:{C['ink']};">
-                    {" &nbsp;·&nbsp; ".join(_partes)}
-                    &nbsp;·&nbsp; <span style="color:{C['ink_soft']};">detalhes em 📅 Prazos de Contratos</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    # Alerta automático de prazos (vencidos / vencendo em 30 dias / parcela
+    # com possível atraso de pagamento — ver detectar_parcelas_atrasadas)
+    _n_vencidos = int((df_compras["prazo_status"] == dh.PRAZO_VENCIDO).sum()) if "prazo_status" in df_compras.columns else 0
+    _n_urgentes = int((df_compras["prazo_status"] == dh.PRAZO_URGENTE).sum()) if "prazo_status" in df_compras.columns else 0
+    _n_atrasadas = len(parcelas_atrasadas)
+    if _n_vencidos or _n_urgentes or _n_atrasadas:
+        _partes = []
+        if _n_vencidos:
+            _partes.append(f"🚨 <strong>{_n_vencidos}</strong> contrato{'s' if _n_vencidos != 1 else ''} vencido{'s' if _n_vencidos != 1 else ''}")
+        if _n_urgentes:
+            _partes.append(f"⚠️ <strong>{_n_urgentes}</strong> vencendo em até 30 dias")
+        if _n_atrasadas:
+            _partes.append(f"🔶 <strong>{_n_atrasadas}</strong> parcela{'s' if _n_atrasadas != 1 else ''} com possível atraso de NF")
+        st.markdown(
+            f"""
+            <div style="background:{C['urucum']}0F;border:1px solid {C['urucum']}55;border-radius:6px;
+                        padding:10px 16px;margin-bottom:14px;font-size:0.85rem;color:{C['ink']};">
+                {" &nbsp;·&nbsp; ".join(_partes)}
+                &nbsp;·&nbsp; <span style="color:{C['ink_soft']};">detalhes em 📅 Prazos de Contratos</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # Aviso de diagnóstico: colunas essenciais não mapeadas
     _colunas_essenciais = {"tipo", "fornecedor", "valor", "status"}
@@ -1950,6 +2012,43 @@ def _secao_prazos():
                     """,
                         unsafe_allow_html=True,
                     )
+
+    st.markdown("<div style='margin-top:22px;'></div>", unsafe_allow_html=True)
+    secao_titulo("Parcelas com possível atraso de pagamento", icone="alert_tri")
+    st.caption(
+        f"Parcela paga há {_dias_alerta_parcela}+ dias sem que a Nota Fiscal da parcela "
+        "seguinte tenha sido registrada — pode indicar que o fluxo travou. Ajuste o "
+        "prazo em Configurações."
+    )
+    if not parcelas_atrasadas:
+        estado_vazio("Nenhuma parcela com indício de atraso no momento.")
+    else:
+        for _a in parcelas_atrasadas:
+            st.markdown(
+                f"""
+                <div style="display:flex;align-items:center;gap:12px;background:{C['surface']};
+                            border:1px solid {C['line']};border-left:4px solid {C['sol']};
+                            border-radius:14px;padding:12px 18px;margin-bottom:8px;
+                            box-shadow:{C['card_shadow']};">
+                    <div style="flex:1;">
+                        <span style="font-weight:700;color:{C['ink']};font-size:0.9rem;">
+                            {html.escape(_val_txt(_a['fornecedor']) or '—')}
+                        </span>
+                        <span style="color:{C['ink_soft']};font-size:0.76rem;margin-left:8px;">
+                            {html.escape(_val_txt(_a['descritivo_parcela']) or '—')} paga →
+                            aguardando NF de {html.escape(_val_txt(_a['descritivo_proxima']) or 'próxima parcela')}
+                        </span>
+                    </div>
+                    <div style="color:{C['ink_soft']};font-size:0.78rem;white-space:nowrap;">
+                        pago em {_fmt(_a['data_pgto_anterior'], 'data')}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;color:{C['sol_texto']};font-weight:700;font-size:0.78rem;white-space:nowrap;">
+                        {svg_icon('alert_tri', 14, C['sol_texto'])} há {_a['dias_desde_pagamento']} dias sem NF
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -2675,80 +2774,69 @@ def _pagina_configuracoes():
         st.session_state["flash_ok"] = "Configurações salvas por 5 dias."
         st.rerun()
 
-    # --- Autenticação de dois fatores (2FA) — Owner e Admin, cada um pra si ---
-    if _papel_usuario in (dh.PAPEL_OWNER, dh.PAPEL_ADMIN):
+    # --- Regras de negócio — Owner e Admin ---
+    st.divider()
+    secao_titulo("Regras de negócio", icone="alert_tri")
+    novo_dias_alerta = st.number_input(
+        "Dias sem NF para alertar sobre possível atraso de pagamento",
+        min_value=1, max_value=365, step=1, value=_dias_alerta_parcela,
+        help=(
+            "Se uma parcela foi paga e, depois desse número de dias, a Nota Fiscal "
+            "da parcela seguinte ainda não foi registrada, o dashboard mostra um alerta."
+        ),
+    )
+    if st.button("💾 Salvar regra de alerta"):
+        if not sheets_url_input:
+            st.error("Configure a fonte de dados (acima) antes.")
+        else:
+            try:
+                dh.salvar_config_valor(sheets_url_input, dh.CONFIG_DIAS_ALERTA_PARCELA, str(int(novo_dias_alerta)))
+                dh.carregar_config.clear()
+                st.session_state["flash_ok"] = f"Alerta ajustado para {int(novo_dias_alerta)} dias."
+                st.rerun()
+            except Exception as e:
+                st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+
+    # --- Autenticação de dois fatores (2FA) — só o Owner tem senha própria;   ---
+    # --- o resto da equipe entra com Google, que já cuida disso por conta.   ---
+    if _papel_usuario == dh.PAPEL_OWNER:
         st.divider()
         secao_titulo("Autenticação de dois fatores (2FA)", icone="lock")
         st.caption(
             "Exige um código do seu app autenticador (Google Authenticator, Authy etc.) "
-            "além da senha, pra dificultar invasão mesmo se a senha vazar."
+            "além da senha do Owner, pra dificultar invasão mesmo se a senha vazar. "
+            "Admin/Viewer/Requisitante entram com Google — 2FA para essas contas é "
+            "gerenciado direto pelo Google Workspace da organização."
         )
-
-        if _papel_usuario == dh.PAPEL_OWNER:
-            if _OWNER_TOTP_SECRET:
-                st.success("✅ 2FA ativo pro Owner (segredo configurado nas Secrets).")
-            else:
-                st.warning("2FA ainda não ativado pro Owner.")
-                if st.button("🔐 Gerar segredo de 2FA"):
-                    st.session_state["_novo_totp_owner"] = dh.gerar_segredo_totp()
-                _segredo_gerado = st.session_state.get("_novo_totp_owner")
-                if _segredo_gerado:
-                    _uri = dh.obter_totp_uri(_segredo_gerado, _OWNER_LOGIN or "owner")
-                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
-                    st.code(_segredo_gerado, language=None)
-                    st.info(
-                        "Nas Secrets do Streamlit Cloud, adicione:\n\n"
-                        f"`ADMIN_TOTP_SECRET = \"{_segredo_gerado}\"`\n\n"
-                        "e salve — o app reinicia sozinho e o 2FA passa a valer no próximo login."
-                    )
+        if _OWNER_TOTP_SECRET:
+            st.success("✅ 2FA ativo pro Owner (segredo configurado nas Secrets).")
         else:
-            _usuarios_2fa = dh.carregar_usuarios(sheets_url_input) if sheets_url_input else {}
-            _meu_registro = _usuarios_2fa.get(st.session_state["login_usuario"], {})
-            _meu_totp = _meu_registro.get("totp_secret", "")
-
-            if _meu_totp:
-                st.success("✅ 2FA ativo na sua conta.")
-                with st.form("form_desativar_2fa"):
-                    codigo_desativar = st.text_input("Digite um código atual do app pra desativar", max_chars=6)
-                    desativar_2fa = st.form_submit_button("Desativar 2FA")
-                if desativar_2fa:
-                    if dh.verificar_totp(_meu_totp, codigo_desativar):
-                        dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], "")
-                        st.session_state["flash_ok"] = "2FA desativado."
-                        st.rerun()
-                    else:
-                        st.error("Código inválido.")
-            else:
-                st.warning("2FA ainda não ativado na sua conta.")
-                if st.button("🔐 Ativar 2FA"):
-                    st.session_state["_novo_totp_admin"] = dh.gerar_segredo_totp()
-                _segredo_admin = st.session_state.get("_novo_totp_admin")
-                if _segredo_admin:
-                    _uri = dh.obter_totp_uri(_segredo_admin, st.session_state["login_usuario"])
-                    st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
-                    st.code(_segredo_admin, language=None)
-                    with st.form("form_confirmar_2fa"):
-                        codigo_confirmar = st.text_input("Digite o código gerado pra confirmar", max_chars=6)
-                        confirmar_ativacao = st.form_submit_button("Confirmar e ativar")
-                    if confirmar_ativacao:
-                        if dh.verificar_totp(_segredo_admin, codigo_confirmar):
-                            dh.definir_totp_usuario(sheets_url_input, st.session_state["login_usuario"], _segredo_admin)
-                            st.session_state.pop("_novo_totp_admin", None)
-                            st.session_state["flash_ok"] = "2FA ativado com sucesso."
-                            st.rerun()
-                        else:
-                            st.error("Código inválido — confira o horário do seu celular e tente de novo.")
+            st.warning("2FA ainda não ativado pro Owner.")
+            if st.button("🔐 Gerar segredo de 2FA"):
+                st.session_state["_novo_totp_owner"] = dh.gerar_segredo_totp()
+            _segredo_gerado = st.session_state.get("_novo_totp_owner")
+            if _segredo_gerado:
+                _uri = dh.obter_totp_uri(_segredo_gerado, _OWNER_LOGIN or "owner")
+                st.image(_qr_image_bytes(_uri), width=200, caption="Escaneie no app autenticador")
+                st.code(_segredo_gerado, language=None)
+                st.info(
+                    "Nas Secrets do Streamlit Cloud, adicione:\n\n"
+                    f"`ADMIN_TOTP_SECRET = \"{_segredo_gerado}\"`\n\n"
+                    "e salve — o app reinicia sozinho e o 2FA passa a valer no próximo login."
+                )
 
     # --- Gerenciar Acessos — visível APENAS para o Owner ---
     if _papel_usuario == dh.PAPEL_OWNER:
         st.divider()
         secao_titulo("Gerenciar Acessos", icone="user")
-        st.caption("Cadastre administradores, visualizadores e requisitantes.")
+        st.caption(
+            f"Autorize e-mails @{dh.DOMINIO_CORPORATIVO} a entrar com Google — "
+            "não existe senha aqui, a pessoa só precisa estar logada na própria conta corporativa."
+        )
 
         with st.form("form_novo_usuario", clear_on_submit=True):
-            novo_login = st.text_input("Login do novo usuário")
+            novo_login = st.text_input("E-mail corporativo", placeholder=f"nome@{dh.DOMINIO_CORPORATIVO}")
             novo_nome  = st.text_input("Nome de exibição")
-            nova_senha = st.text_input("Senha", type="password")
             novo_papel = st.selectbox(
                 "Papel",
                 options=[dh.PAPEL_ADMIN, dh.PAPEL_VIEWER, dh.PAPEL_REQUISITANTE],
@@ -2759,14 +2847,14 @@ def _pagina_configuracoes():
         if cadastrar:
             if not sheets_url_input:
                 st.error("Configure a fonte de dados (acima) antes de cadastrar usuários.")
-            elif not novo_login.strip() or not nova_senha:
-                st.error("Login e senha são obrigatórios.")
-            elif novo_login.strip() == _OWNER_LOGIN:
-                st.error("Este login já é o do Owner.")
+            elif not novo_login.strip():
+                st.error("Informe o e-mail corporativo.")
+            elif not dh.email_e_corporativo(novo_login):
+                st.error(f"O e-mail precisa terminar em @{dh.DOMINIO_CORPORATIVO}.")
             else:
                 try:
-                    dh.adicionar_usuario(sheets_url_input, novo_login, nova_senha, novo_papel, novo_nome)
-                    st.session_state["flash_ok"] = f"Usuário {novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
+                    dh.adicionar_usuario(sheets_url_input, novo_login, novo_papel, novo_nome)
+                    st.session_state["flash_ok"] = f"{novo_login} cadastrado como {_PAPEL_LABEL.get(novo_papel, novo_papel)}."
                     st.rerun()
                 except Exception as e:
                     st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
