@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 import gspread
 import pandas as pd
 import pyotp
+import requests
 import streamlit as st
 
 
@@ -608,6 +609,70 @@ def classificar_prazo(termino_contrato, hoje: date | None = None) -> str:
     return PRAZO_TRANQUILO
 
 
+# --------------------------------------------------------------------------- #
+# CNPJ — validação local (sem depender de rede) + consulta de localização     #
+# (cidade/UF) via BrasilAPI, espelho público e gratuito dos dados abertos da  #
+# Receita Federal. Objetivo: mapear de onde vêm os fornecedores contratados   #
+# (ex: valorizar preferência por fornecedores de Belém/Amazônia).             #
+# --------------------------------------------------------------------------- #
+
+def limpar_cnpj(cnpj: str) -> str:
+    """Remove tudo que não for dígito (pontos, barra, traço, espaços)."""
+    return re.sub(r"\D", "", cnpj or "")
+
+
+def validar_cnpj(cnpj: str) -> bool:
+    """Valida os dois dígitos verificadores do CNPJ (algoritmo da Receita
+    Federal) — pega erro de digitação sem precisar consultar nada externo."""
+    c = limpar_cnpj(cnpj)
+    if len(c) != 14 or c == c[0] * 14:
+        return False
+
+    def _digito(base: str, pesos: list[int]) -> str:
+        soma = sum(int(d) * p for d, p in zip(base, pesos))
+        resto = soma % 11
+        return "0" if resto < 2 else str(11 - resto)
+
+    dv1 = _digito(c[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    dv2 = _digito(c[:12] + dv1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return c[12:14] == dv1 + dv2
+
+
+def formatar_cnpj(cnpj: str) -> str:
+    """Formata como XX.XXX.XXX/XXXX-XX para exibição/gravação. Devolve o
+    texto original (sem formatar) se não tiver 14 dígitos válidos."""
+    c = limpar_cnpj(cnpj)
+    if len(c) != 14:
+        return cnpj or ""
+    return f"{c[0:2]}.{c[2:5]}.{c[5:8]}/{c[8:12]}-{c[12:14]}"
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def consultar_cnpj(cnpj: str) -> dict | None:
+    """
+    Consulta dados públicos do CNPJ via BrasilAPI (espelho gratuito dos dados
+    abertos da Receita Federal — sem chave, sem custo). Cacheado por 24h: o
+    endereço registrado de uma empresa não muda de um acesso pro outro.
+    Retorna {"cidade", "uf", "razao_social"} ou None se não achar ou falhar
+    (rede fora do ar, CNPJ inexistente etc.) — nunca lança exceção.
+    """
+    c = limpar_cnpj(cnpj)
+    if len(c) != 14:
+        return None
+    try:
+        resp = requests.get(f"https://brasilapi.com.br/api/cnpj/v1/{c}", timeout=10)
+        if resp.status_code != 200:
+            return None
+        dados = resp.json()
+        return {
+            "cidade":       dados.get("municipio", "") or "",
+            "uf":           dados.get("uf", "") or "",
+            "razao_social": dados.get("razao_social", "") or "",
+        }
+    except Exception:
+        return None
+
+
 def sheets_url_para_csv(url: str, nome_aba: str = "") -> str | None:
     """
     Converte qualquer variante de URL do Google Sheets para URL de exportação CSV.
@@ -689,6 +754,12 @@ _MAPA_NOME_PARA_CAMPO = {
     "observações":         "observacoes",
     "observacoes":         "observacoes",
     "observação":          "observacoes",
+    "cnpj":                "cnpj",
+    "cidade":               "cidade",
+    "município":            "cidade",
+    "municipio":            "cidade",
+    "uf":                   "uf",
+    "estado":               "uf",
 }
 
 # Índice de coluna (0-based) → campo lógico, para as colunas de cabeçalho
@@ -1313,7 +1384,7 @@ def detectar_parcelas_atrasadas(df: pd.DataFrame, dias_limite: int) -> list[dict
 _ABA_APROVACOES = "Aprovações"
 
 _HEADER_APROVACOES = [
-    "tipo", "fornecedor", "req_mxm", "valor", "descritivo", "status",
+    "tipo", "fornecedor", "cnpj", "cidade", "uf", "req_mxm", "valor", "descritivo", "status",
     "termino_contrato", "link_contrato", "doc_fiscal", "data_pgto", "observacoes",
     "solicitante_login", "solicitante_nome", "status_aprovacao",
     "data_solicitacao", "motivo_rejeicao",
@@ -1590,6 +1661,12 @@ def _normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
         "observações":        "observacoes",
         "observacoes":        "observacoes",
         "observação":         "observacoes",
+        "cnpj":               "cnpj",
+        "cidade":             "cidade",
+        "município":          "cidade",
+        "municipio":          "cidade",
+        "uf":                 "uf",
+        "estado":             "uf",
     }
 
     # Constrói mapa real: nome original → nome interno (via lookup normalizado)

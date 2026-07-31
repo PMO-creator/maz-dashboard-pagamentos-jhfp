@@ -1308,6 +1308,32 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
         f_link       = st.text_input("Link do contrato", value=c.get("link_contrato", ""))
     f_obs = st.text_area("Observações", value=c.get("observacoes", ""), height=70)
 
+    st.markdown("**Localização do fornecedor**")
+    st.session_state.setdefault("rev_cidade", c.get("cidade", ""))
+    st.session_state.setdefault("rev_uf", c.get("uf", ""))
+    col_cnpj, col_buscar = st.columns([3, 1])
+    with col_cnpj:
+        f_cnpj = st.text_input("CNPJ *", value=c.get("cnpj", ""), placeholder="00.000.000/0000-00", key="rev_cnpj")
+    with col_buscar:
+        st.markdown("<div style='margin-top:1.8em;'></div>", unsafe_allow_html=True)
+        if st.button("🔍 Buscar", use_container_width=True, key="rev_buscar_cnpj"):
+            if not dh.validar_cnpj(f_cnpj):
+                st.error("CNPJ inválido.")
+            else:
+                with st.spinner("Consultando..."):
+                    _info = dh.consultar_cnpj(dh.limpar_cnpj(f_cnpj))
+                if _info:
+                    st.session_state["rev_cidade"] = _info.get("cidade", "")
+                    st.session_state["rev_uf"] = _info.get("uf", "")
+                    st.success(f"Localizado: {_info.get('cidade')} - {_info.get('uf')}")
+                else:
+                    st.warning("Não foi possível localizar esse CNPJ — preencha manualmente.")
+    col3, col4 = st.columns(2)
+    with col3:
+        f_cidade = st.text_input("Cidade", key="rev_cidade")
+    with col4:
+        f_uf = st.text_input("UF", key="rev_uf", max_chars=2)
+
     st.markdown("**Parcelas**")
     parcelas_editadas = []
     for i, p in enumerate(solicitacao["parcelas"]):
@@ -1332,6 +1358,8 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
         if st.button("✅ Aprovar e lançar", use_container_width=True, type="primary"):
             if not f_fornecedor.strip() or f_valor <= 0:
                 st.error("Fornecedor e Valor total são obrigatórios.")
+            elif not dh.validar_cnpj(f_cnpj):
+                st.error("CNPJ inválido ou não informado.")
             else:
                 try:
                     avisos = dh.aprovar_solicitacao(
@@ -1341,6 +1369,8 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
                             "descritivo": f_descritivo, "status": f_status,
                             "termino_contrato": f_termino, "link_contrato": f_link,
                             "observacoes": f_obs,
+                            "cnpj": dh.formatar_cnpj(dh.limpar_cnpj(f_cnpj)),
+                            "cidade": f_cidade, "uf": f_uf,
                         },
                         parcelas_editadas,
                     )
@@ -1484,6 +1514,12 @@ def _wizard_pedido(modo: str) -> None:
                 f_req        = st.text_input("Req. MXM", value=c.get("req_mxm", ""), key="wiz_req")
                 f_valor      = st.number_input("Valor total do contrato (R$) *", min_value=0.0, step=100.0, format="%.2f", value=float(c.get("valor", 0.0)), key="wiz_valor")
                 f_status     = st.selectbox("Status inicial *", options=_opts_status, index=_idx_status)
+                f_cnpj       = st.text_input(
+                    "CNPJ do fornecedor *", value=c.get("cnpj", ""), key="wiz_cnpj",
+                    placeholder="00.000.000/0000-00",
+                    help="Usado pra localizar automaticamente a cidade/UF do fornecedor "
+                         "(ex: mapear a preferência por fornecedores de Belém/Amazônia).",
+                )
             with col2:
                 f_descritivo = st.text_input("Descritivo", value=c.get("descritivo", ""), key="wiz_descritivo")
                 f_termino    = st.date_input("Término do contrato", value=c.get("termino_contrato") or None, key="wiz_termino")
@@ -1495,7 +1531,12 @@ def _wizard_pedido(modo: str) -> None:
         if avancar:
             if not f_fornecedor.strip() or f_valor <= 0:
                 st.error("Fornecedor e Valor total são obrigatórios.")
+            elif not dh.validar_cnpj(f_cnpj):
+                st.error("CNPJ inválido ou não informado — confira os números digitados.")
             else:
+                _cnpj_limpo = dh.limpar_cnpj(f_cnpj)
+                with st.spinner("Consultando localização do CNPJ..."):
+                    _info_cnpj = dh.consultar_cnpj(_cnpj_limpo)
                 ss["lanc_compra"] = {
                     "fornecedor":       f_fornecedor,
                     "req_mxm":          f_req,
@@ -1505,7 +1546,15 @@ def _wizard_pedido(modo: str) -> None:
                     "termino_contrato": f_termino,
                     "link_contrato":    f_link,
                     "observacoes":      f_obs,
+                    "cnpj":             dh.formatar_cnpj(_cnpj_limpo),
+                    "cidade":           _info_cnpj.get("cidade", "") if _info_cnpj else "",
+                    "uf":               _info_cnpj.get("uf", "") if _info_cnpj else "",
                 }
+                ss["_cnpj_aviso"] = (
+                    None if _info_cnpj else
+                    "Não foi possível localizar automaticamente a cidade/UF desse CNPJ — "
+                    "você pode completar depois em Contratos."
+                )
                 _parcelas_ia = ss.pop("lanc_parcelas_extraidas", None)
                 if _parcelas_ia:
                     ss["lanc_n_parcelas"] = len(_parcelas_ia)
@@ -1520,10 +1569,16 @@ def _wizard_pedido(modo: str) -> None:
 
     # ==================== ETAPA 2 — Condições de Pagamento ==================== #
     c = ss["lanc_compra"]
+    _aviso_cnpj = ss.pop("_cnpj_aviso", None)
+    if _aviso_cnpj:
+        st.warning(_aviso_cnpj)
+    _local_fornecedor = " · ".join(p for p in [c.get("cidade"), c.get("uf")] if p)
     st.markdown(
         "**2. Condições de Pagamento** &nbsp;·&nbsp; "
         f"<span style='color:{C['ink_soft']};'>{html.escape(str(c.get('fornecedor', '')))} · "
-        f"{fmt_brl(c.get('valor', 0))}</span>",
+        f"{fmt_brl(c.get('valor', 0))}"
+        + (f" · 📍 {html.escape(_local_fornecedor)}" if _local_fornecedor else "")
+        + "</span>",
         unsafe_allow_html=True,
     )
     if st.button("←  Voltar ao pedido", key="lanc_voltar"):
@@ -2332,11 +2387,45 @@ def _dialog_pedido(gi: int, atual) -> None:
         f_link       = st.text_input("Link do contrato", value=_val_txt(atual.get("link_contrato")))
     f_obs = st.text_area("Observações", value=_val_txt(atual.get("observacoes")), height=80)
 
+    st.markdown("**Localização do fornecedor**")
+    st.caption(
+        "Preencha o CNPJ pra localizar automaticamente cidade/UF — útil pra "
+        "completar contratos antigos, lançados antes desse campo existir."
+    )
+    st.session_state.setdefault(f"edit_cidade_{gi}", _val_txt(atual.get("cidade")))
+    st.session_state.setdefault(f"edit_uf_{gi}", _val_txt(atual.get("uf")))
+    col_cnpj, col_buscar = st.columns([3, 1])
+    with col_cnpj:
+        f_cnpj = st.text_input(
+            "CNPJ", value=_val_txt(atual.get("cnpj")), placeholder="00.000.000/0000-00", key=f"edit_cnpj_{gi}",
+        )
+    with col_buscar:
+        st.markdown("<div style='margin-top:1.8em;'></div>", unsafe_allow_html=True)
+        if st.button("🔍 Buscar", use_container_width=True, key=f"edit_buscar_cnpj_{gi}"):
+            if not dh.validar_cnpj(f_cnpj):
+                st.error("CNPJ inválido.")
+            else:
+                with st.spinner("Consultando..."):
+                    _info = dh.consultar_cnpj(dh.limpar_cnpj(f_cnpj))
+                if _info:
+                    st.session_state[f"edit_cidade_{gi}"] = _info.get("cidade", "")
+                    st.session_state[f"edit_uf_{gi}"] = _info.get("uf", "")
+                    st.success(f"Localizado: {_info.get('cidade')} - {_info.get('uf')}")
+                else:
+                    st.warning("Não foi possível localizar esse CNPJ — preencha manualmente.")
+    col3, col4 = st.columns(2)
+    with col3:
+        f_cidade = st.text_input("Cidade", key=f"edit_cidade_{gi}")
+    with col4:
+        f_uf = st.text_input("UF", key=f"edit_uf_{gi}", max_chars=2)
+
     c_salvar, c_cancelar = st.columns(2)
     with c_salvar:
         if st.button("💾 Salvar", use_container_width=True, type="primary"):
             if not f_fornecedor.strip() or f_valor <= 0:
                 st.error("Fornecedor e Valor são obrigatórios.")
+            elif f_cnpj.strip() and not dh.validar_cnpj(f_cnpj):
+                st.error("CNPJ inválido — corrija ou deixe em branco.")
             else:
                 try:
                     dh.atualizar_pedido(sheets_url_input, nome_aba_input, gi, {
@@ -2344,6 +2433,8 @@ def _dialog_pedido(gi: int, atual) -> None:
                         "descritivo": f_descritivo, "status": f_status,
                         "termino_contrato": f_termino, "link_contrato": f_link,
                         "observacoes": f_obs,
+                        "cnpj": dh.formatar_cnpj(dh.limpar_cnpj(f_cnpj)) if f_cnpj.strip() else "",
+                        "cidade": f_cidade, "uf": f_uf,
                     })
                     _fechar_dialog_e_atualizar("Pedido atualizado.")
                 except Exception as e:
