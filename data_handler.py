@@ -886,11 +886,15 @@ def inserir_compra_com_parcelas(sheets_url: str, nome_aba: str,
     _preencher_linha(linha_compra, mapa_col, {**dados_compra, "tipo": "Compra"})
     linhas.append(linha_compra)
 
-    # 2) Linhas de Pagamento (parcelas), com descritivo automático
+    # 2) Linhas de Pagamento (parcelas), com descritivo automático.
+    # O fornecedor vem da Compra (não do formulário de parcela) e é repetido
+    # em cada linha de Pagamento — precisa estar ali pra identificar a quem
+    # pertence cada parcela sem depender de olhar a linha da Compra acima.
     total = len(parcelas)
     for i, p in enumerate(parcelas):
         linha_pag = [""] * n_cols
         _preencher_linha(linha_pag, mapa_col, {
+            "fornecedor": dados_compra.get("fornecedor", ""),
             **p,
             "tipo": "Pagamento",
             "descritivo": descritivo_parcela(i, total),
@@ -1068,9 +1072,19 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
     # para copiar estilo). Sem parcela alguma no grupo, usa a última do sheet.
     ref_formato_0b = g["parcelas"][-1] if g["parcelas"] else _ultima_linha_do_tipo(valores, header_row, mapa_col, "Pagamento")
 
+    # Fornecedor vem da linha da Compra do próprio grupo (mesmo motivo de
+    # inserir_compra_com_parcelas: precisa estar na linha da parcela também).
+    col_fornecedor = mapa_col.get("fornecedor")
+    linha_compra_vals = valores[g["compra"]] if g["compra"] < len(valores) else []
+    fornecedor_grupo = (
+        linha_compra_vals[col_fornecedor]
+        if col_fornecedor is not None and col_fornecedor < len(linha_compra_vals)
+        else ""
+    )
+
     n_cols = max(len(valores[header_row]), max(mapa_col.values(), default=-1) + 1)
     nova = [""] * n_cols
-    _preencher_linha(nova, mapa_col, {**dados, "tipo": "Pagamento"})
+    _preencher_linha(nova, mapa_col, {"fornecedor": fornecedor_grupo, **dados, "tipo": "Pagamento"})
     ws.insert_row(nova, index=destino_1based, value_input_option="USER_ENTERED")
 
     if "dias_vencimento" in mapa_col:
@@ -1089,6 +1103,38 @@ def adicionar_parcela(sheets_url: str, nome_aba: str, grupo_idx: int, dados: dic
 
     _renumerar_descritivos(ws, grupo_idx)
     return avisos
+
+
+def backfill_fornecedor_parcelas(sheets_url: str, nome_aba: str) -> int:
+    """
+    Correção pontual (rodar uma vez): preenche o fornecedor em linhas de
+    Pagamento antigas que ficaram em branco por causa de um bug já corrigido
+    nos pontos de escrita (inserir_compra_com_parcelas, criar_solicitacao,
+    adicionar_parcela). Só toca parcelas que estão realmente vazias nessa
+    coluna — nunca sobrescreve um valor já preenchido. Retorna quantas
+    linhas foram corrigidas.
+    """
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    col_fornecedor = mapa_col.get("fornecedor")
+    if col_fornecedor is None:
+        return 0
+
+    grupos = _localizar_grupos(valores, header_row, mapa_col)
+    celulas = []
+    for g in grupos:
+        linha_compra = valores[g["compra"]] if g["compra"] < len(valores) else []
+        fornecedor = linha_compra[col_fornecedor].strip() if col_fornecedor < len(linha_compra) else ""
+        if not fornecedor:
+            continue
+        for r in g["parcelas"]:
+            linha_pag = valores[r]
+            atual = linha_pag[col_fornecedor].strip() if col_fornecedor < len(linha_pag) else ""
+            if not atual:
+                celulas.append(gspread.Cell(r + 1, col_fornecedor + 1, fornecedor))
+
+    if celulas:
+        ws.update_cells(celulas, value_input_option="USER_ENTERED")
+    return len(celulas)
 
 
 # --------------------------------------------------------------------------- #
@@ -1325,10 +1371,14 @@ def criar_solicitacao(sheets_url: str, dados_compra: dict, parcelas: list[dict],
     _preencher_linha(linha_compra, mapa_col, {**dados_compra, "tipo": "Compra", **comuns})
     linhas.append(linha_compra)
 
+    # Fornecedor vem da Compra e é repetido em cada Pagamento (mesmo motivo
+    # de inserir_compra_com_parcelas: identificar a parcela sem depender da
+    # linha da Compra acima).
     total = len(parcelas)
     for i, p in enumerate(parcelas):
         linha_pag = [""] * n_cols
         _preencher_linha(linha_pag, mapa_col, {
+            "fornecedor": dados_compra.get("fornecedor", ""),
             **p, "tipo": "Pagamento", "descritivo": descritivo_parcela(i, total), **comuns,
         })
         linhas.append(linha_pag)

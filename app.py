@@ -2942,6 +2942,30 @@ def _pagina_configuracoes():
                         except Exception as e:
                             st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
+    # --- Manutenção pontual — visível APENAS para o Owner ---
+    if _papel_usuario == dh.PAPEL_OWNER:
+        st.divider()
+        secao_titulo("Manutenção", icone="dash")
+        st.caption(
+            "Correção pontual: preenche o fornecedor em parcelas antigas que ficaram "
+            "em branco (bug já corrigido nos lançamentos novos). Só roda uma vez — "
+            "não sobrescreve parcelas que já têm fornecedor preenchido."
+        )
+        if st.button("🔧 Corrigir fornecedor ausente em parcelas antigas"):
+            if not sheets_url_input:
+                st.error("Configure a fonte de dados (acima) antes.")
+            else:
+                try:
+                    _n_corrigidas = dh.backfill_fornecedor_parcelas(sheets_url_input, nome_aba_input)
+                    if _n_corrigidas:
+                        dh.carregar_do_sheets.clear()
+                        st.session_state["flash_ok"] = f"{_n_corrigidas} parcela(s) corrigida(s) com o fornecedor."
+                    else:
+                        st.session_state["flash_ok"] = "Nenhuma parcela precisava de correção."
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
+
     # --- Log de Alterações — Owner e Admin ---
     st.divider()
     secao_titulo("Log de Alterações", icone="file_text")
