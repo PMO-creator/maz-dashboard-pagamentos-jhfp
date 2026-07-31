@@ -1208,6 +1208,109 @@ def backfill_fornecedor_parcelas(sheets_url: str, nome_aba: str) -> int:
     return len(celulas)
 
 
+_PADRAO_CNPJ_EM_TEXTO = re.compile(r"\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}")
+
+
+def _normalizar_nome_fornecedor(nome: str) -> str:
+    """Normaliza pra comparação exata tolerante a espaço/caixa (não a acento —
+    fornecedor já vem sempre da própria planilha, sem variação de digitação
+    entre os dois lados dessa comparação)."""
+    return re.sub(r"\s+", " ", (nome or "").strip().lower())
+
+
+def processar_lote_cnpj(sheets_url: str, nome_aba: str, texto_colado: str) -> dict:
+    """
+    Recebe um texto colado — uma linha por fornecedor, com o CNPJ em qualquer
+    formato/posição na linha (tab, vírgula, ponto-e-vírgula ou só no meio de
+    texto livre; o CNPJ é reconhecido pelo padrão de dígitos, o resto da
+    linha vira o nome do fornecedor). Pra cada linha:
+      1. Valida o CNPJ (dígitos verificadores).
+      2. Acha o fornecedor na planilha (comparação exata, sem espaço/caixa).
+      3. Consulta cidade/UF na BrasilAPI (cacheado).
+      4. Grava CNPJ + cidade/UF em TODAS as linhas 'Compra' desse fornecedor
+         que ainda estejam com o CNPJ vazio — nunca sobrescreve o que já
+         tinha.
+    Retorna um relatório: {"aplicados", "invalidos", "nao_encontrados", "ja_tinham"}
+    (cada um é uma lista de strings prontas pra exibir).
+    """
+    relatorio = {"aplicados": [], "invalidos": [], "nao_encontrados": [], "ja_tinham": []}
+
+    pares: list[tuple[str, str]] = []
+    for linha in (texto_colado or "").splitlines():
+        linha = linha.strip()
+        if not linha:
+            continue
+        m = _PADRAO_CNPJ_EM_TEXTO.search(linha)
+        if not m:
+            continue
+        cnpj_bruto = m.group(0)
+        fornecedor_bruto = (linha[: m.start()] + linha[m.end():]).strip(" \t;,|-:")
+        pares.append((fornecedor_bruto, cnpj_bruto))
+
+    if not pares:
+        return relatorio
+
+    ws, valores, header_row, mapa_col = _abrir_e_mapear(sheets_url, nome_aba)
+    col_fornecedor = mapa_col.get("fornecedor")
+    col_cnpj       = mapa_col.get("cnpj")
+    col_cidade     = mapa_col.get("cidade")
+    col_uf         = mapa_col.get("uf")
+    col_tipo       = mapa_col.get("tipo")
+    if col_fornecedor is None or col_cnpj is None or col_tipo is None:
+        raise RuntimeError(
+            "Colunas 'Fornecedor'/'CNPJ' não encontradas na planilha — "
+            "confirme se as colunas CNPJ/Cidade/UF já foram adicionadas."
+        )
+
+    linhas_por_fornecedor: dict[str, list[int]] = {}
+    for r in range(header_row + 1, len(valores)):
+        linha = valores[r]
+        if col_tipo >= len(linha) or str(linha[col_tipo]).strip().title() != "Compra":
+            continue
+        nome = linha[col_fornecedor] if col_fornecedor < len(linha) else ""
+        linhas_por_fornecedor.setdefault(_normalizar_nome_fornecedor(nome), []).append(r)
+
+    celulas = []
+    for fornecedor_bruto, cnpj_bruto in pares:
+        if not validar_cnpj(cnpj_bruto):
+            relatorio["invalidos"].append(f"{fornecedor_bruto} ({cnpj_bruto})")
+            continue
+
+        linhas_grupo = linhas_por_fornecedor.get(_normalizar_nome_fornecedor(fornecedor_bruto))
+        if not linhas_grupo:
+            relatorio["nao_encontrados"].append(fornecedor_bruto)
+            continue
+
+        cnpj_limpo = limpar_cnpj(cnpj_bruto)
+        cnpj_fmt = formatar_cnpj(cnpj_limpo)
+        info = consultar_cnpj(cnpj_limpo)
+        cidade = info.get("cidade", "") if info else ""
+        uf = info.get("uf", "") if info else ""
+
+        tocou_alguma = False
+        for r in linhas_grupo:
+            linha = valores[r]
+            atual_cnpj = linha[col_cnpj].strip() if col_cnpj < len(linha) else ""
+            if atual_cnpj:
+                continue
+            celulas.append(gspread.Cell(r + 1, col_cnpj + 1, cnpj_fmt))
+            if col_cidade is not None:
+                celulas.append(gspread.Cell(r + 1, col_cidade + 1, cidade))
+            if col_uf is not None:
+                celulas.append(gspread.Cell(r + 1, col_uf + 1, uf))
+            tocou_alguma = True
+
+        if tocou_alguma:
+            sufixo_local = f" — {cidade}/{uf}" if cidade else " — localização não encontrada"
+            relatorio["aplicados"].append(f"{fornecedor_bruto} → {cnpj_fmt}{sufixo_local}")
+        else:
+            relatorio["ja_tinham"].append(fornecedor_bruto)
+
+    if celulas:
+        ws.update_cells(celulas, value_input_option="USER_ENTERED")
+    return relatorio
+
+
 # --------------------------------------------------------------------------- #
 # CONFIGURAÇÕES DE NEGÓCIO — parâmetros ajustáveis pelo Owner na tela de       #
 # Configurações, persistidos na PLANILHA (não em disco — mesmo motivo de      #

@@ -3057,6 +3057,65 @@ def _pagina_configuracoes():
                 except Exception as e:
                     st.error(f"Não foi possível gravar na planilha.\n\nDetalhe técnico: `{e}`")
 
+        st.markdown("---")
+        st.markdown("**Preencher CNPJ em lote**")
+        st.caption(
+            "Cole a lista de fornecedores já ativos com o CNPJ de cada um — um por linha, "
+            "em qualquer formato (funciona colar direto do Excel/Sheets, com tab, vírgula "
+            "ou texto livre: o CNPJ é reconhecido sozinho na linha). Cidade/UF são "
+            "localizados automaticamente. Nunca sobrescreve um CNPJ já preenchido — "
+            "só aplica onde ainda está vazio, em todos os contratos daquele fornecedor."
+        )
+        _texto_lote = st.text_area(
+            "Cole aqui (uma linha por fornecedor)",
+            height=150,
+            placeholder="Fornecedor Exemplo LTDA\t12.345.678/0001-90\nOutra Empresa SA - 98.765.432/0001-10",
+            key="cnpj_lote_texto",
+        )
+        if st.button("📥 Processar lista"):
+            if not sheets_url_input:
+                st.error("Configure a fonte de dados (acima) antes.")
+            elif not _texto_lote.strip():
+                st.error("Cole a lista de fornecedores e CNPJs antes.")
+            else:
+                try:
+                    with st.spinner("Processando e consultando a localização de cada CNPJ..."):
+                        _relatorio = dh.processar_lote_cnpj(sheets_url_input, nome_aba_input, _texto_lote)
+                    if _relatorio["aplicados"]:
+                        dh.carregar_do_sheets.clear()
+                    st.session_state["cnpj_lote_relatorio"] = _relatorio
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não foi possível processar.\n\nDetalhe técnico: `{e}`")
+
+        _relatorio_cnpj = st.session_state.pop("cnpj_lote_relatorio", None)
+        if _relatorio_cnpj:
+            n_ap  = len(_relatorio_cnpj["aplicados"])
+            n_inv = len(_relatorio_cnpj["invalidos"])
+            n_nf  = len(_relatorio_cnpj["nao_encontrados"])
+            n_ja  = len(_relatorio_cnpj["ja_tinham"])
+            if n_ap:
+                st.success(f"✅ {n_ap} fornecedor(es) atualizado(s).")
+            else:
+                st.warning("Nenhum fornecedor foi atualizado — confira os detalhes abaixo.")
+            if _relatorio_cnpj["aplicados"]:
+                with st.expander(f"Aplicados ({n_ap})", expanded=True):
+                    for item in _relatorio_cnpj["aplicados"]:
+                        st.caption(item)
+            if n_ja:
+                with st.expander(f"Já tinham CNPJ, ignorados ({n_ja})"):
+                    for item in _relatorio_cnpj["ja_tinham"]:
+                        st.caption(item)
+            if n_nf:
+                with st.expander(f"⚠️ Fornecedor não encontrado na planilha ({n_nf})", expanded=True):
+                    st.caption("Confira se o nome está grafado exatamente igual ao da planilha.")
+                    for item in _relatorio_cnpj["nao_encontrados"]:
+                        st.caption(item)
+            if n_inv:
+                with st.expander(f"❌ CNPJ inválido ({n_inv})", expanded=True):
+                    for item in _relatorio_cnpj["invalidos"]:
+                        st.caption(item)
+
     # --- Log de Alterações — Owner e Admin ---
     st.divider()
     secao_titulo("Log de Alterações", icone="file_text")
