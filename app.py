@@ -1484,6 +1484,8 @@ def _wizard_pedido(modo: str) -> None:
                     # (mesma lição aprendida no botão "Limpar" da busca).
                     if _dados_ia.get("fornecedor"):
                         ss["wiz_fornecedor"] = _dados_ia["fornecedor"]
+                    if _dados_ia.get("cnpj"):
+                        ss["wiz_cnpj"] = dh.formatar_cnpj(dh.limpar_cnpj(_dados_ia["cnpj"]))
                     if _dados_ia.get("req_mxm"):
                         ss["wiz_req"] = _dados_ia["req_mxm"]
                     if _dados_ia.get("valor"):
@@ -1504,6 +1506,8 @@ def _wizard_pedido(modo: str) -> None:
                     _campos_achados = sum(1 for k in ("fornecedor", "valor", "descritivo", "termino_contrato", "numero_contrato") if _dados_ia.get(k))
                     if not _campos_achados:
                         st.warning("Nenhum campo reconhecido nesse documento. Preencha manualmente abaixo.")
+                    elif not _dados_ia.get("cnpj"):
+                        st.warning("CNPJ não reconhecido no documento — preencha manualmente antes de avançar.")
                     st.rerun(scope="fragment")
 
         with st.form("form_compra"):

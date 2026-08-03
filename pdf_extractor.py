@@ -29,6 +29,7 @@ STATUS_PARCELA_PADRAO = "Aguardando emissão de NF/DANFE"
 # fonte de número, vigência e condição de pagamento.
 _PRIORIDADE_MESCLA = {
     "fornecedor":       ("pedido", "contrato"),
+    "cnpj":             ("pedido", "contrato"),
     "req_mxm":          ("pedido", "contrato"),
     "valor":            ("pedido", "contrato"),
     "descritivo":       ("pedido", "contrato"),
@@ -37,6 +38,40 @@ _PRIORIDADE_MESCLA = {
     "observacoes":      ("contrato", "pedido"),
     "parcelas":         ("contrato", "pedido"),
 }
+
+_CNPJ_PADRAO = re.compile(r"(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})")
+
+
+def _cnpj_valido(cnpj: str) -> bool:
+    """Confere os dígitos verificadores (mesmo algoritmo de data_handler.py —
+    duplicado de propósito: este módulo não depende do Streamlit/data_handler
+    pra continuar reutilizável por processos externos, ex: agente de e-mail)."""
+    c = re.sub(r"\D", "", cnpj or "")
+    if len(c) != 14 or c == c[0] * 14:
+        return False
+
+    def _dv(base: str, pesos: list[int]) -> str:
+        soma = sum(int(d) * p for d, p in zip(base, pesos))
+        resto = soma % 11
+        return "0" if resto < 2 else str(11 - resto)
+
+    dv1 = _dv(c[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    dv2 = _dv(c[:12] + dv1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return c[12:14] == dv1 + dv2
+
+
+def _extrair_cnpj_proximo(texto: str, pos_ancora: int, janela: int = 400) -> str | None:
+    """
+    Acha um CNPJ válido dentro de uma janela de texto logo APÓS uma posição de
+    referência (ex: o nome do fornecedor recém-encontrado) — em vez de pegar o
+    primeiro CNPJ do documento inteiro, o que arriscaria pegar o do próprio IDG
+    como contratante em vez do fornecedor.
+    """
+    trecho = texto[pos_ancora: pos_ancora + janela]
+    for m in _CNPJ_PADRAO.finditer(trecho):
+        if _cnpj_valido(m.group(1)):
+            return m.group(1)
+    return None
 
 
 def extrair_texto_pdf(pdf_bytes: bytes) -> str:
@@ -173,6 +208,9 @@ def extrair_pedido_compra(texto: str) -> dict:
     m = re.search(r"FORNECEDOR:\s*\n\s*I\.E\.:.*\n\s*(.+)", texto)
     if m:
         d["fornecedor"] = m.group(1).strip()
+        cnpj = _extrair_cnpj_proximo(texto, m.end())
+        if cnpj:
+            d["cnpj"] = cnpj
     m = re.search(r"REQUISIÇÃO\(ÕES\):\s*([\d;,\s]+)", texto)
     if m:
         d["req_mxm"] = m.group(1).strip().rstrip(";").strip()
@@ -208,6 +246,9 @@ def extrair_contrato(texto: str) -> dict:
     m = re.search(r"De outro lado,\s*([A-ZÁ-Ú0-9][A-ZÀ-Ü0-9.\-\s&/]+?),", texto)
     if m:
         d["fornecedor"] = m.group(1).strip()
+        cnpj = _extrair_cnpj_proximo(texto, m.end())
+        if cnpj:
+            d["cnpj"] = cnpj
     m = re.search(r"valor bruto e total de R\$\s*([\d.,]+)", texto, re.IGNORECASE)
     if m:
         d["valor"] = _parse_valor_brl(m.group(1))
