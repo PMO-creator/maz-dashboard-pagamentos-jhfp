@@ -82,8 +82,15 @@ def extrair_texto_pdf(pdf_bytes: bytes) -> str:
 
 
 def _parse_valor_brl(texto: str) -> float | None:
+    """
+    Converte um número em formato brasileiro (R$ 1.234,56) para float.
+    `.rstrip(",.")` descarta pontuação de frase que a regex de captura às
+    vezes inclui por engano (ex: 'R$ 1.000,00, na assinatura' — a vírgula
+    depois do valor não é dele) — sem isso, o parse quebrava silenciosamente
+    e a parcela inteira era descartada.
+    """
     try:
-        return float(texto.strip().replace(".", "").replace(",", "."))
+        return float(texto.strip().rstrip(",.").replace(".", "").replace(",", "."))
     except (ValueError, AttributeError):
         return None
 
@@ -149,7 +156,8 @@ def _extrair_parcelas(texto: str, valor_total: "float | None") -> list[dict]:
         R$ X ... (ii) Saldo Remanescente, no valor bruto de R$ Y') — o total
         usa 'valor bruto E TOTAL de R$', que é distinto e fica de fora;
       - 'em N parcelas de R$ X';
-      - '1ª parcela ... R$ X ... 2ª parcela ... R$ Y';
+      - '1ª parcela ... R$ X ... 2ª parcela ... R$ Y' (ordinal em número OU por
+        extenso: 'A primeira parcela, no valor de R$ X ... A segunda parcela...');
       - divisão percentual do valor total ('30% ... 70%', '50% ... 50%').
     O detalhamento de custos por item (ex: 'a) Projeto R$3.800 b) Visita
     R$6.480') NÃO conta como parcela — nesses casos o pagamento é integral.
@@ -182,10 +190,19 @@ def _extrair_parcelas(texto: str, valor_total: "float | None") -> list[dict]:
         if 2 <= n <= 60 and v:
             return _parcelas([v] * n)
 
-    # 3) parcelas nomeadas: "1ª parcela ... R$ X", "2ª parcela ... R$ Y"
+    # 3) parcelas nomeadas: "1ª parcela ... R$ X", "2ª parcela ... R$ Y" — ou o
+    #    ordinal por extenso ("A primeira parcela, no valor de R$ X ...").
+    # Nota: usar `.{0,60}?` (qualquer caractere, não-greedy) em vez de um
+    # `[^R]{0,60}` negado — com re.IGNORECASE, "[^R]" também exclui o "r"
+    # minúsculo (ex: de "valor"), que aparece o tempo todo ANTES do "R$" real
+    # em frases como "no valor de R$ X" — isso travava o casamento sempre.
     nomeadas = [v for v in (
         _parse_valor_brl(mm.group(1))
-        for mm in re.finditer(r"\b\d{1,2}[ªaºo]\s*parcela\b[^R]{0,50}R\$\s*([\d.,]+)", t, re.IGNORECASE)
+        for mm in re.finditer(
+            r"\b(?:\d{1,2}[ªaºo]|primeira|segunda|terceira|quarta|quinta|sexta|"
+            r"s[ée]tima|oitava|nona|d[ée]cima)\s*parcela\b.{0,60}?R\$\s*([\d.,]+)",
+            t, re.IGNORECASE,
+        )
     ) if v]
     if len(nomeadas) >= 2:
         return _parcelas(nomeadas)
