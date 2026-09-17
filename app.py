@@ -1294,7 +1294,8 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
     )
 
     _opts_status = dh.STATUS_TODOS
-    _idx_status = _opts_status.index(c.get("status")) if c.get("status") in _opts_status else 0
+    _idx_status = (_opts_status.index(c.get("status")) if c.get("status") in _opts_status
+                   else dh.indice_status(dh.STATUS_PADRAO_PEDIDO))
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1345,7 +1346,8 @@ def _dialog_revisar_solicitacao(solicitacao: dict) -> None:
                 value=_val_num(p.get("valor")), key=f"rev_valor_{i}",
             )
             _opts_p = dh.STATUS_TODOS
-            _idx_p = _opts_p.index(p.get("status")) if p.get("status") in _opts_p else 0
+            _idx_p = (_opts_p.index(p.get("status")) if p.get("status") in _opts_p
+                      else dh.indice_status(dh.STATUS_PADRAO_PARCELA))
             ps = st.selectbox("Status", options=_opts_p, index=_idx_p, key=f"rev_status_{i}")
         with pc2:
             pdoc = st.text_input("Doc. Fiscal", value=p.get("doc_fiscal", ""), key=f"rev_doc_{i}")
@@ -1457,7 +1459,8 @@ def _wizard_pedido(modo: str) -> None:
     if ss["lanc_etapa"] == 1:
         c = ss["lanc_compra"]
         _opts_status = dh.STATUS_TODOS
-        _idx_status = _opts_status.index(c["status"]) if c.get("status") in _opts_status else 0
+        _idx_status = (_opts_status.index(c["status"]) if c.get("status") in _opts_status
+                       else dh.indice_status(dh.STATUS_PADRAO_PEDIDO))
 
         with st.expander("📄 Importar dados de PDF (pedido de compra e/ou contrato)", expanded=False):
             st.caption(
@@ -1630,7 +1633,12 @@ def _wizard_pedido(modo: str) -> None:
         col1, col2 = st.columns(2)
         with col1:
             st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f", key=f"np_valor_{i}")
-            st.selectbox("Status *", options=dh.STATUS_TODOS, key=f"np_status_{i}")
+            # `index` só vale na primeira renderização de cada chave; depois o
+            # session_state manda, preservando o que a pessoa escolheu.
+            st.selectbox(
+                "Status *", options=dh.STATUS_TODOS, key=f"np_status_{i}",
+                index=dh.indice_status(dh.STATUS_PADRAO_PARCELA),
+            )
         with col2:
             st.text_input("Doc. Fiscal (nº da NF)", key=f"np_doc_{i}")
             st.date_input("Data de pagamento", value=None, key=f"np_data_{i}")
@@ -2503,7 +2511,10 @@ def _dialog_nova_parcela(gi: int) -> None:
     col1, col2 = st.columns(2)
     with col1:
         f_valor  = st.number_input("Valor da parcela (R$) *", min_value=0.0, step=100.0, format="%.2f")
-        f_status = st.selectbox("Status", options=dh.STATUS_TODOS)
+        f_status = st.selectbox(
+            "Status", options=dh.STATUS_TODOS,
+            index=dh.indice_status(dh.STATUS_PADRAO_PARCELA),
+        )
     with col2:
         f_doc  = st.text_input("Doc. Fiscal (nº da NF)")
         f_data = st.date_input("Data de pagamento", value=None)

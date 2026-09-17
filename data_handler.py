@@ -542,6 +542,28 @@ EMOJI_GRUPO = {
 # (usada para popular os selectbox dos formulários de lançamento).
 STATUS_TODOS = [s for grupo in STATUS_GRUPOS.values() for s in grupo]
 
+# Status com que um lançamento NOVO nasce.
+#
+# A ordem de STATUS_TODOS começa pelo grupo "concluido", então sem estes
+# padrões os formulários abriam em "Pago" — o estado final do fluxo — e um
+# contrato recém-lançado entrava no painel como se já estivesse quitado.
+# O contrato nasce assinado e ainda não faturado; cada parcela nasce esperando
+# a NF do fornecedor, que é o primeiro evento real do fluxo de pagamento.
+STATUS_PADRAO_PEDIDO = "Contrato/Template em aberto"
+STATUS_PADRAO_PARCELA = "Aguardando emissão de NF/DANFE"
+
+
+def indice_status(status: str) -> int:
+    """Posição de um status em STATUS_TODOS, para o `index=` dos selectbox.
+
+    Tolera status desconhecido (cai no primeiro) em vez de estourar: renomear
+    um status em STATUS_GRUPOS não deve derrubar os formulários.
+    """
+    try:
+        return STATUS_TODOS.index(status)
+    except ValueError:
+        return 0
+
 
 # --------------------------------------------------------------------------- #
 # PRAZOS DE CONTRATO — classificação por urgência de vencimento               #
